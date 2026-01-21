@@ -1,23 +1,100 @@
-name: Build and Release Extension Charts
+name: Build and Release Extension
 
 on:
-  workflow_dispatch:
-  release:  
+  release:
     types: [released]
+  workflow_dispatch:
 
-defaults:
-  run:
-    shell: bash
-    working-directory: ./
+env:
+  ACTIONS_RUNNER_DEBUG: false
 
 jobs:
-  build-extension-charts:
-    uses: rancher/dashboard/.github/workflows/build-extension-charts.yml@master
-    permissions:
-      actions: write
-      contents: write
-      deployments: write
-      pages: write
-    with:
-      target_branch: gh-pages
-      tagged_release: ${{ github.ref_name }}
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Yarn
+        run: npm install -g yarn
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Build extension
+        run: yarn build-pkg my-first-extension
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+
+      - name: Create Helm chart
+        run: |
+          CHART_VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p .cr-release-packages
+          mkdir -p tmp-chart
+          
+          # Create Chart.yaml
+          cat > tmp-chart/Chart.yaml << EOF
+          apiVersion: v2
+          name: my-first-extension
+          description: Hello World Extension for Rancher
+          type: application
+          version: ${CHART_VERSION}
+          appVersion: ${CHART_VERSION}
+          annotations:
+            catalog.cattle.io/display-name: "My First Extension"
+            catalog.cattle.io/release-name: my-first-extension
+            catalog.cattle.io/rancher-version: ">= 2.10.0"
+            catalog.cattle.io/ui-extensions-version: ">= 3.0.0 < 4.0.0"
+          EOF
+          
+          # Create values.yaml
+          cat > tmp-chart/values.yaml << EOF
+          plugin:
+            name: my-first-extension
+            version: ${CHART_VERSION}
+            endpoint: https://haison0211.github.io/rancher-extension/my-first-extension/my-first-extension-${CHART_VERSION}.umd.min.js
+          EOF
+          
+          # Create templates directory and files
+          mkdir -p tmp-chart/templates
+          
+          cat > tmp-chart/templates/extension.yaml << 'EOF'
+          apiVersion: catalog.cattle.io/v1
+          kind: UIPlugin
+          metadata:
+            name: {{ .Values.plugin.name }}
+            namespace: cattle-ui-plugin-system
+          spec:
+            plugin:
+              name: {{ .Values.plugin.name }}
+              version: {{ .Values.plugin.version }}
+              endpoint: {{ .Values.plugin.endpoint }}
+              noCache: false
+          EOF
+          
+          # Package the chart
+          helm package tmp-chart -d .cr-release-packages
+          helm repo index .cr-release-packages --url https://haison0211.github.io/rancher-extension
+
+      - name: Copy extension files
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p .cr-release-packages/my-first-extension
+          cp -r dist-pkg/my-first-extension-${VERSION}/* .cr-release-packages/my-first-extension/
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: .cr-release-packages
+          keep_files: true
