@@ -2,12 +2,13 @@ name: Build and Release Extension Charts
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - main
-  pull_request:
-    branches:
-      - main
+    inputs:
+      tagged_release:
+        description: 'Release tag (e.g., my-first-extension-1.0.1)'
+        required: true
+        default: 'my-first-extension-1.0.1'
+  release:
+    types: [released]
 
 defaults:
   run:
@@ -23,4 +24,6 @@ jobs:
       deployments: write
       pages: write
     with:
+      target_branch: gh-pages
+      tagged_release: ${{ github.event.inputs.tagged_release || github.ref_name }}
       target_branch: gh-pages
