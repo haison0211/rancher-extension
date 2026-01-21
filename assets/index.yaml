@@ -20,4 +20,24 @@ entries:
     urls:
     - assets/my-first-extension/my-first-extension-1.0.0.tgz
     version: 1.0.0
-generated: "2026-01-21T07:19:20.359505286Z"
+  rancher-pod-metrics:
+  - annotations:
+      catalog.cattle.io/certified: rancher
+      catalog.cattle.io/namespace: cattle-ui-plugin-system
+      catalog.cattle.io/os: linux
+      catalog.cattle.io/permits-os: linux, windows
+      catalog.cattle.io/rancher-version: '>= 2.10.0'
+      catalog.cattle.io/scope: management
+      catalog.cattle.io/ui-component: plugins
+      catalog.cattle.io/ui-extensions-version: '>= 3.0.0 < 4.0.0'
+    apiVersion: v2
+    appVersion: 1.0.0
+    created: "2026-01-21T09:46:34.020697478Z"
+    description: Add CPU and RAM metrics columns to Pod Explorer
+    digest: 7dbdac7ca8fe183befb97eecddad8b6015b24c197594c4ee7944c4c7e9518224
+    name: rancher-pod-metrics
+    type: application
+    urls:
+    - assets/rancher-pod-metrics/rancher-pod-metrics-1.0.0.tgz
+    version: 1.0.0
+generated: "2026-01-21T09:46:34.020221942Z"
