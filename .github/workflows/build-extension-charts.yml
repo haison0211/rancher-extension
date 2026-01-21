@@ -26,4 +26,3 @@ jobs:
     with:
       target_branch: gh-pages
       tagged_release: ${{ github.event.inputs.tagged_release || github.ref_name }}
-      target_branch: gh-pages
