@@ -51,36 +51,35 @@ jobs:
           version: ${CHART_VERSION}
           appVersion: ${CHART_VERSION}
           annotations:
-            catalog.cattle.io/display-name: "My First Extension"
+            catalog.cattle.io/certified: rancher
+            catalog.cattle.io/namespace: cattle-ui-plugin-system
             catalog.cattle.io/release-name: my-first-extension
-            catalog.cattle.io/rancher-version: ">= 2.10.0"
-            catalog.cattle.io/ui-extensions-version: ">= 3.0.0 < 4.0.0"
+            catalog.cattle.io/ui-component: plugins
+            catalog.cattle.io/display-name: "My First Extension"
+            catalog.cattle.io/provides-gvr: "ui.cattle.io.plugin/v1"
           EOF
           
-          # Create values.yaml
-          cat > tmp-chart/values.yaml << EOF
-          plugin:
-            name: my-first-extension
-            version: ${CHART_VERSION}
-            endpoint: https://haison0211.github.io/rancher-extension/my-first-extension/my-first-extension-${CHART_VERSION}.umd.min.js
+          # Create values.yaml (empty for now)
+          cat > tmp-chart/values.yaml << 'EOF'
           EOF
           
           # Create templates directory and files
           mkdir -p tmp-chart/templates
           
-          cat > tmp-chart/templates/extension.yaml << 'EOF'
+          # Create UIPlugin CRD
+          cat > tmp-chart/templates/uiplugin.yaml << 'EOFTEMPLATE'
           apiVersion: catalog.cattle.io/v1
           kind: UIPlugin
           metadata:
-            name: {{ .Values.plugin.name }}
+            name: {{ .Chart.Name }}
             namespace: cattle-ui-plugin-system
           spec:
             plugin:
-              name: {{ .Values.plugin.name }}
-              version: {{ .Values.plugin.version }}
-              endpoint: {{ .Values.plugin.endpoint }}
+              name: {{ .Chart.Name }}
+              version: {{ .Chart.Version }}
+              endpoint: "https://haison0211.github.io/rancher-extension/{{ .Chart.Name }}/{{ .Chart.Name }}-{{ .Chart.Version }}.umd.min.js"
               noCache: false
-          EOF
+          EOFTEMPLATE
           
           # Package the chart
           helm package tmp-chart -d .cr-release-packages
