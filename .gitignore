@@ -69,5 +69,8 @@ jspm_packages/
 .DS_Store
 Thumbs.db
 
+# Rancher Dashboard source (not needed in extension repo)
+dashboard-master/
+
 # Locally built assets (extensions)
 # dist-pkg
