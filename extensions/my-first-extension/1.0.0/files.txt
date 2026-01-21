@@ -1,0 +1,3 @@
+plugin/my-first-extension-1.0.0.umd.min.js
+plugin/my-first-extension-1.0.0.umd.min.js.map
+plugin/package.json

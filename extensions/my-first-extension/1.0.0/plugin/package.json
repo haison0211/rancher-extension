@@ -1,0 +1,19 @@
+{
+  "name": "my-first-extension",
+  "description": "my-first-extension plugin",
+  "version": "1.0.0",
+  "private": false,
+  "rancher": true,
+  "engines": {
+    "node": ">=16"
+  },
+  "devDependencies": {
+    "@vue/cli-plugin-babel": "~5.0.0",
+    "@vue/cli-service": "~5.0.0",
+    "@vue/cli-plugin-typescript": "~5.0.0"
+  },
+  "files": [
+    "**/*"
+  ],
+  "main": "my-first-extension-1.0.0.umd.min.js"
+}
