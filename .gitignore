@@ -70,4 +70,4 @@ jspm_packages/
 Thumbs.db
 
 # Locally built assets (extensions)
-dist-pkg
+# dist-pkg
