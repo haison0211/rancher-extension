@@ -1,0 +1,19 @@
+apiVersion: v1
+entries:
+  my-first-extension:
+  - annotations:
+      catalog.cattle.io/display-name: My First Extension
+      catalog.cattle.io/rancher-version: '>= 2.10.0'
+      catalog.cattle.io/release-name: my-first-extension
+      catalog.cattle.io/ui-extensions-version: '>= 3.0.0 < 4.0.0'
+    apiVersion: v2
+    appVersion: 1.0.0
+    created: "2026-01-21T05:04:22.850708002Z"
+    description: Hello World Extension for Rancher
+    digest: 26378751820e188255f4049a6a739a798b016f8a845c0a0828f094e53f3c4f98
+    name: my-first-extension
+    type: application
+    urls:
+    - https://haison0211.github.io/rancher-extension/my-first-extension-1.0.0.tgz
+    version: 1.0.0
+generated: "2026-01-21T05:04:22.850403962Z"
