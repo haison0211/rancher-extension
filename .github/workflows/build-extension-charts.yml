@@ -6,7 +6,7 @@ on:
       tagged_release:
         description: 'Release tag (e.g., my-first-extension-1.0.1)'
         required: true
-        default: 'my-first-extension-1.0.1'
+        default: 'my-first-extension-1.0.0'
   release:
     types: [released]
 
