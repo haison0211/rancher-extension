@@ -2,14 +2,13 @@ name: Build and Release Extension Catalog
 
 on:
   workflow_dispatch:
-    inputs:
-      tagged_release:
-        description: 'Release tag (e.g., my-first-extension-1.0.1)'
-        required: true
-        default: 'my-first-extension-1.0.0'
-  release:
-    types: [released]
-    
+    push:
+      branches:
+        - main
+    pull_request:
+      branches:
+        - main
+
 defaults:
   run:
     shell: bash
