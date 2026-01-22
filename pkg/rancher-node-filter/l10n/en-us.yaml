@@ -1,0 +1,8 @@
+node:
+  list:
+    labelFilter:
+      labelKey: "Label Key"
+      selectLabelKey: "Select a label key..."
+      labelValuePlaceholder: "Enter label value to filter..."
+      clear: "Clear Filter"
+      filteringBy: "Filtering by {key} contains '{value}' - {count} node(s) found"
