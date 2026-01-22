@@ -32,9 +32,9 @@ entries:
       catalog.cattle.io/ui-extensions-version: '>= 3.0.0 < 4.0.0'
     apiVersion: v2
     appVersion: 1.0.0
-    created: "2026-01-22T07:40:47.839437309Z"
+    created: "2026-01-22T08:29:31.327708258Z"
     description: Extend Node Explorer to filter by node labels
-    digest: c7316ad35cf9059ae98fe5aeab9003d2f83317f0c1020a164fb0447f9a06238a
+    digest: 1c99d5d6f82ef03a3d95e2faf856b6ace685d37c9ee7e72b9ecc1f14c320cd19
     name: rancher-node-filter
     type: application
     urls:
@@ -60,4 +60,4 @@ entries:
     urls:
     - assets/rancher-pod-metrics/rancher-pod-metrics-1.0.0.tgz
     version: 1.0.0
-generated: "2026-01-22T07:40:47.838947936Z"
+generated: "2026-01-22T08:29:31.327045064Z"
