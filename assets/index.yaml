@@ -20,6 +20,26 @@ entries:
     urls:
     - assets/my-first-extension/my-first-extension-1.0.0.tgz
     version: 1.0.0
+  rancher-node-filter:
+  - annotations:
+      catalog.cattle.io/certified: rancher
+      catalog.cattle.io/namespace: cattle-ui-plugin-system
+      catalog.cattle.io/os: linux
+      catalog.cattle.io/permits-os: linux, windows
+      catalog.cattle.io/rancher-version: '>= 2.8.0'
+      catalog.cattle.io/scope: management
+      catalog.cattle.io/ui-component: plugins
+      catalog.cattle.io/ui-extensions-version: '>= 3.0.0 < 4.0.0'
+    apiVersion: v2
+    appVersion: 1.0.0
+    created: "2026-01-22T07:40:47.839437309Z"
+    description: Extend Node Explorer to filter by node labels
+    digest: c7316ad35cf9059ae98fe5aeab9003d2f83317f0c1020a164fb0447f9a06238a
+    name: rancher-node-filter
+    type: application
+    urls:
+    - assets/rancher-node-filter/rancher-node-filter-1.0.0.tgz
+    version: 1.0.0
   rancher-pod-metrics:
   - annotations:
       catalog.cattle.io/certified: rancher
@@ -40,4 +60,4 @@ entries:
     urls:
     - assets/rancher-pod-metrics/rancher-pod-metrics-1.0.0.tgz
     version: 1.0.0
-generated: "2026-01-21T09:46:34.020221942Z"
+generated: "2026-01-22T07:40:47.838947936Z"
