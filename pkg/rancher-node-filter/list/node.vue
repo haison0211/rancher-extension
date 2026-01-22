@@ -94,22 +94,10 @@ export default defineComponent({
     ...mapGetters(['currentCluster']),
 
     kubeNodes() {
-      // Get nodes from appropriate source based on pagination
-      // When pagination is enabled, nodes are in paginationResult
-      // When pagination is disabled, nodes are in cluster/all
-      const allNodes = this.$store.getters[`cluster/all`](this.resource) || [];
-      
-      console.log('[Node Filter] kubeNodes:', {
-        totalNodes: allNodes.length,
-        canPaginate: this.canPaginate,
-        hasFilter: this.hasActiveFilter
-      });
-      
-      if (allNodes.length === 0) {
-        console.warn('All of node is not loaded yet');
-      }
-      
-      return allNodes;
+      // Get nodes from store
+      // Note: when server-side pagination is used, this only contains the current page
+      // When label filter is active, all nodes are loaded via ensureAllNodesLoaded()
+      return this.$store.getters[`cluster/all`](this.resource) || [];
     },
 
     hasWindowsNodes() {
@@ -202,24 +190,9 @@ export default defineComponent({
         return this.kubeNodes;
       }
 
-      console.log('[Node Filter] Filtering:', {
-        selectedKey: this.selectedLabelKey,
-        searchValue: this.labelValue,
-        totalNodes: this.kubeNodes?.length || 0
-      });
-
-      const filtered = this.kubeNodes.filter((node: NodeResource) => {
-        const labels = node.metadata?.labels || {};
-        const nodeValue = labels[this.selectedLabelKey];
-        
-        console.log('[Node Filter] Node:', node.id, 'Label:', this.selectedLabelKey, '=', nodeValue);
-        
+      return this.kubeNodes.filter((node: NodeResource) => {
         return matchesLabelFilter(node, this.selectedLabelKey, this.labelValue);
       });
-
-      console.log('[Node Filter] Filtered result:', filtered.length, 'nodes');
-      
-      return filtered;
     }
   },
 
@@ -387,15 +360,11 @@ export default defineComponent({
       // When filter becomes active, ensure all nodes are loaded
       // This is necessary because pagination only loads current page
       if (this.canPaginate && this.hasActiveFilter) {
-        console.log('[Node Filter] Loading all nodes for filtering...');
-        
         try {
           await this.$store.dispatch('cluster/findAll', { 
             type: this.resource,
             opt: { force: true }
           });
-          
-          console.log('[Node Filter] All nodes loaded:', this.kubeNodes.length);
         } catch (err) {
           console.error('[Node Filter] Failed to load all nodes:', err);
         }
