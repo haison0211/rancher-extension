@@ -2,11 +2,11 @@
 import PaginatedResourceTable from '@shell/components/PaginatedResourceTable.vue';
 import ResourceTable from '@shell/components/ResourceTable.vue';
 import Tag from '@shell/components/Tag.vue';
-import { Banner } from '@components/Banner';
 import { PODS } from '@shell/config/table-headers';
+// @ts-ignore - metric-poller doesn't have type declarations
 import metricPoller from '@shell/mixins/metric-poller';
 
-import { CAPI as CAPI_ANNOTATIONS } from '@shell/config/labels-annotations.js';
+import { CAPI as CAPI_ANNOTATIONS } from '@shell/config/labels-annotations';
 
 import { defineComponent } from 'vue';
 import { ActionFindPageArgs } from '@shell/types/store/dashboard-store.types';
@@ -31,7 +31,6 @@ export default defineComponent({
     PaginatedResourceTable,
     ResourceTable,
     Tag,
-    Banner,
     LabeledSelect
   },
 
@@ -98,11 +97,6 @@ export default defineComponent({
       // Note: when server-side pagination is used, this only contains the current page
       // When label filter is active, all nodes are loaded via ensureAllNodesLoaded()
       return this.$store.getters[`cluster/all`](this.resource) || [];
-    },
-
-    hasWindowsNodes() {
-      // Note if server side pagination is used this is only applicable to the current page
-      return (this.kubeNodes || []).some((node: any) => node.status.nodeInfo.operatingSystem === 'windows');
     },
 
     tableGroup: mapPref(GROUP_RESOURCES),
@@ -388,12 +382,6 @@ export default defineComponent({
 
 <template>
   <div>
-    <Banner
-      v-if="hasWindowsNodes"
-      color="info"
-      :label="t('cluster.custom.registrationCommand.windowsWarning')"
-    />
-    
     <!-- Custom Label Filter Section -->
     <div class="label-filter-section mb-20">
       <div class="filter-row">
