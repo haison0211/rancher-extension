@@ -71,6 +71,7 @@ Thumbs.db
 
 # Rancher Dashboard source (not needed in extension repo)
 dashboard-master/
+rancher-main/
 
 # Locally built assets (extensions)
 # dist-pkg
