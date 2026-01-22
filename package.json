@@ -1,5 +1,5 @@
 {
-  "name": "rancher-pod-metrics",
+  "name": "rancher-node-filter",
   "version": "1.0.0",
   "private": false,
   "engines": {
