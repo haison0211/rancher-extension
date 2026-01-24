@@ -1,9 +1,12 @@
 # 🔍 Rancher Node Filter Extension
 
-Extension này mở rộng **Node Explorer** trong Rancher Dashboard để thêm khả năng **filter nodes theo labels**.
+Extension này mở rộng **Node Explorer** trong Rancher Dashboard với 2 tính năng chính:
+1. **Label Filtering**: Filter nodes theo labels
+2. **Synchronized Metrics**: Fix sự sai lệch CPU/RAM giữa Node List và Node Detail
 
 ## ✨ Features
 
+### Label Filtering
 - ✅ **Label Key Dropdown**: Dropdown list chứa tất cả label keys có sẵn từ các nodes
 - ✅ **Label Value Filter**: Text field để nhập label value cần tìm
 - ✅ **Real-time Filtering**: Lọc ngay lập tức khi nhập
@@ -12,6 +15,36 @@ Extension này mở rộng **Node Explorer** trong Rancher Dashboard để thêm
 - ✅ **Filter Info**: Hiển thị số lượng nodes được tìm thấy
 - ✅ **Smart Label Keys**: Tự động loại bỏ các system labels để UX sạch hơn
 - ✅ **Preserve Features**: Giữ nguyên sort, pagination, và tất cả features mặc định
+
+### Synchronized Metrics (v1.4.0+)
+- ✅ **Consistent CPU Usage**: Dùng actual usage từ metrics-server (như Node Detail)
+- ✅ **Consistent RAM Usage**: Dùng actual usage từ metrics-server (như Node Detail)
+- ✅ **Fixed RAM Capacity**: Dùng allocatable thay vì capacity (như Node Detail)
+- ✅ **Same as kubectl top nodes**: Metrics giờ khớp với `kubectl top nodes`
+- ✅ **EKS Norman Fix**: Không còn dùng Pod Requests cho EKS clusters từ Norman
+
+## 🐛 Vấn đề được giải quyết (Synchronized Metrics)
+
+### Vấn đề ban đầu
+Trên cùng 1 node, metrics hiển thị khác nhau:
+- **Node List** (`/c/local/explorer/node`): **95% CPU**
+- **Node Detail** (`/c/local/explorer/node/{name}#pods`): **53% CPU**
+
+### Nguyên nhân
+1. **EKS Norman clusters**: Node List dùng **Pod Requests** thay vì **Actual Usage**
+2. **RAM capacity**: Node List dùng **total capacity** thay vì **allocatable**
+
+### Giải pháp
+Extension override Node model để:
+- Luôn dùng actual usage từ metrics-server (giống Node Detail)
+- Dùng allocatable cho cả CPU và RAM (giống Node Detail)
+
+### So sánh trước/sau
+
+| Metric | Trước (Node List) | Sau (Node List) | Node Detail |
+|--------|-------------------|-----------------|-------------|
+| CPU % | 95% (pod requests) | **53%** ✅ | 53% |
+| RAM % | 75% (capacity) | **55%** ✅ | 55% |
 
 ## 📍 Sử dụng
 
@@ -68,17 +101,56 @@ filteredRows() {
 
 ```
 pkg/rancher-node-filter/
-├── index.ts                    # Entry point - register list component
+├── index.ts                    # Entry point - register list component + auto-import models
 ├── package.json                # Extension metadata
 ├── list/
 │   └── node.vue                # Custom Node list với label filter
+├── models/
+│   └── cluster/
+│       └── node.js             # Override Node model với synchronized metrics
+├── types/
+│   └── node-filter.ts          # TypeScript type definitions
 └── l10n/
     └── en-us.yaml              # i18n strings
 ```
 
 ## 🔑 Key Components
 
-### 1. **List Component** (`list/node.vue`)
+### 1. **Node Model Override** (`models/cluster/node.js`)
+
+Override ClusterNode model để fix metrics calculation:
+```javascript
+import ClusterNode from '@shell/models/cluster/node';
+
+export default class SyncedMetricsNode extends ClusterNode {
+  // Always use actual usage from metrics-server (not pod requests)
+  get cpuUsage() {
+    const nodeMetrics = this.$rootGetters['cluster/byId'](METRIC.NODE, this.id);
+    return parseSi(nodeMetrics?.usage?.cpu || '0');
+  }
+  
+  // Use allocatable instead of capacity (consistent with Node Detail)
+  get ramCapacity() {
+    return parseSi(this.status?.allocatable?.memory || '0');
+  }
+  
+  // Recalculate percentages with fixed values
+  get cpuUsagePercentage() {
+    return ((this.cpuUsage * 100) / this.cpuCapacity).toString();
+  }
+  
+  get ramUsagePercentage() {
+    return ((this.ramUsage * 100) / this.ramCapacity).toString();
+  }
+}
+```
+
+**Fixes:**
+- CPU: Dùng actual usage thay vì pod requests (cho EKS Norman clusters)
+- RAM numerator: Dùng actual usage thay vì pod requests  
+- RAM denominator: Dùng allocatable thay vì capacity
+
+### 2. **List Component** (`list/node.vue`)
 
 Vue component override cho Node list:
 ```vue
@@ -141,7 +213,7 @@ cd /Users/admin/Documents/rancher-extension/rancher-extension
 yarn build-pkg rancher-node-filter
 ```
 
-Output sẽ ở: `dist-pkg/rancher-node-filter-1.0.0/rancher-node-filter-1.0.0.tgz`
+Output sẽ ở: `dist-pkg/rancher-node-filter-1.4.0/rancher-node-filter-1.4.0.tgz`
 
 ### Deploy to Rancher
 

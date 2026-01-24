@@ -1,7 +1,7 @@
 {
   "name": "rancher-node-filter",
-  "description": "Extend Node Explorer to filter by node labels",
-  "version": "1.0.0",
+  "description": "Extend Node Explorer with label filtering and synchronized metrics (fixes CPU/RAM discrepancy + Rancher v2.13.1 cache bug)",
+  "version": "2.0.0",
   "private": false,
   "rancher": {
     "annotations": {

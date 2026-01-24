@@ -1,0 +1,19 @@
+{
+  "name": "rancher-node-filter",
+  "description": "Extend Node Explorer with label filtering and synchronized metrics (fixes CPU/RAM discrepancy between Node List and Node Detail)",
+  "version": "1.4.0",
+  "private": false,
+  "rancher": true,
+  "engines": {
+    "node": ">=16"
+  },
+  "devDependencies": {
+    "@vue/cli-plugin-babel": "~5.0.0",
+    "@vue/cli-service": "~5.0.0",
+    "@vue/cli-plugin-typescript": "~5.0.0"
+  },
+  "files": [
+    "**/*"
+  ],
+  "main": "rancher-node-filter-1.4.0.umd.min.js"
+}
