@@ -22,22 +22,27 @@ import ClusterNode from '@shell/models/cluster/node';
 import { METRIC } from '@shell/config/types';
 import { parseSi } from '@shell/utils/units';
 
-// Global cache for direct API metrics (30 second TTL)
+// Global cache for direct API metrics (25 second TTL)
 let metricsCache = null;
 let metricsCacheTime = 0;
-const CACHE_TTL = 30000; // 30 seconds
+const CACHE_TTL = 25000; // 15 seconds
 
 export default class SyncedMetricsNode extends ClusterNode {
   /**
    * Fetch fresh metrics directly from Kubernetes API
    * Bypasses Rancher store which has caching issues in v2.13.1
    * 
-   * @returns {Promise<Object|null>} Metrics object or null
+   * Caching Strategy:
+   * - Fetches ALL node metrics in one API call (efficient)
+   * - Caches for 25s (faster refresh, more API calls)
+   * - All nodes share the same cache (no redundant API calls)
+   * 
+   * @returns {Promise<Object|null>} Metrics object for this node or null
    */
   async _fetchDirectMetrics() {
     const now = Date.now();
     
-    // Return cached data if still fresh
+    // Return cached data if still fresh (prevents API spam)
     if (metricsCache && (now - metricsCacheTime) < CACHE_TTL) {
       return metricsCache.find(m => m.metadata.name === this.metadata.name);
     }
@@ -54,6 +59,8 @@ export default class SyncedMetricsNode extends ClusterNode {
       }
       
       const data = await response.json();
+      
+      // Update global cache (shared across all node instances)
       metricsCache = data.items || [];
       metricsCacheTime = now;
       
@@ -66,14 +73,13 @@ export default class SyncedMetricsNode extends ClusterNode {
 
   /**
    * Get metrics with fallback strategy:
-   * 1. Try direct API (fresh data)
-   * 2. Fallback to Rancher store (cached, may be stale)
-   * 3. Fallback to pod requests
+   * 1. Try cached direct API (fresh within 15s)
+   * 2. Fallback to Rancher store (may be stale)
    * 
    * @returns {Object|null} Metrics usage object
    */
   _getMetricsUsage() {
-    // Check if we have cached direct metrics
+    // Check if we have cached direct metrics (already validated in _fetchDirectMetrics)
     if (metricsCache && (Date.now() - metricsCacheTime) < CACHE_TTL) {
       const directMetrics = metricsCache.find(m => m.metadata.name === this.metadata.name);
       if (directMetrics?.usage) {

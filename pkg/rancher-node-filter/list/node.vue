@@ -198,20 +198,25 @@ export default defineComponent({
 
       // WORKAROUND: Rancher v2.13.1 has metrics cache bug (stores metrics for 20+ days)
       // Fetch fresh metrics directly from K8s API via model's initMetrics()
+      // This call is cached for 30s, so safe to call frequently without spamming API
       if (this.kubeNodes.length > 0) {
-        // Trigger direct API fetch on first node (shares cache across all nodes)
         const firstNode = this.kubeNodes[0];
         if (firstNode && typeof firstNode.initMetrics === 'function') {
           try {
             await firstNode.initMetrics();
-            console.log('[NodeList] Fresh metrics loaded from K8s API');
+            // Success - all nodes now share fresh cached metrics
+            // No need to call store.dispatch, model getters will use fresh cache
+            this.$forceUpdate();
+            return;
           } catch (error) {
             console.warn('[NodeList] Failed to load fresh metrics, falling back to store:', error);
+            // Fall through to store fallback below
           }
         }
       }
 
-      // Also load from store as fallback (in case direct API fails)
+      // Fallback: Load from Rancher store (only if direct API failed)
+      // This is stale data but better than nothing
       if (this.canPaginate) {
         if (!this.kubeNodes.length) {
           return;
