@@ -32,10 +32,10 @@ entries:
       catalog.cattle.io/ui-extensions-version: '>= 3.0.0 < 4.0.0'
     apiVersion: v2
     appVersion: 2.0.0
-    created: "2026-01-24T10:55:14.461052294Z"
+    created: "2026-01-25T05:38:10.272019814Z"
     description: Extend Node Explorer with label filtering and synchronized metrics
       (fixes CPU/RAM discrepancy + Rancher v2.13.1 cache bug)
-    digest: 8143dcc690448033edeeda7ae559cc462016dde6975d8c8970039633cc96610d
+    digest: deeba1b72209e5987c99c30f90c06ea4c63fcb24fd72c540d619264a9fa4536a
     name: rancher-node-filter
     type: application
     urls:
@@ -80,4 +80,4 @@ entries:
     urls:
     - assets/rancher-pod-metrics/rancher-pod-metrics-1.0.0.tgz
     version: 1.0.0
-generated: "2026-01-24T10:55:14.460385119Z"
+generated: "2026-01-25T05:38:10.27077525Z"
