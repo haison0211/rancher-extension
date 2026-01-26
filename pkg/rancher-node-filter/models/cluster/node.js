@@ -21,7 +21,16 @@
 import ClusterNode from '@shell/models/cluster/node';
 import { METRIC } from '@shell/config/types';
 import { parseSi } from '@shell/utils/units';
-import { getPrometheusEndpoint } from '../../utils/prometheus-config.js';
+
+// Defensive import - handle if prometheus-config fails to load
+let getPrometheusEndpoint;
+try {
+  const prometheusConfig = require('../../utils/prometheus-config.js');
+  getPrometheusEndpoint = prometheusConfig.getPrometheusEndpoint;
+} catch (error) {
+  console.warn('[SyncedMetricsNode] Failed to load prometheus-config, disk metrics will be disabled:', error);
+  getPrometheusEndpoint = () => null;
+}
 
 // Global cache for direct API metrics (25 second TTL)
 let metricsCache = null;
@@ -121,6 +130,12 @@ export default class SyncedMetricsNode extends ClusterNode {
     }
     
     try {
+      // DEFENSIVE: Check if getPrometheusEndpoint function is available
+      if (typeof getPrometheusEndpoint !== 'function') {
+        console.warn('[SyncedMetricsNode] Prometheus config module not loaded');
+        return null;
+      }
+      
       // Get configured endpoint from localStorage
       const configuredEndpoint = getPrometheusEndpoint();
       
