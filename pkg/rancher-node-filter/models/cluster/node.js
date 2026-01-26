@@ -21,11 +21,21 @@
 import ClusterNode from '@shell/models/cluster/node';
 import { METRIC } from '@shell/config/types';
 import { parseSi } from '@shell/utils/units';
+import { getPrometheusEndpoint } from '../../utils/prometheus-config.js';
 
 // Global cache for direct API metrics (25 second TTL)
 let metricsCache = null;
 let metricsCacheTime = 0;
-const CACHE_TTL = 25000; // 15 seconds
+const CACHE_TTL = 25000; // 25 seconds
+
+// Global cache for Prometheus endpoint detection (5 minutes TTL)
+let prometheusEndpoint = null;
+let prometheusDetectionTime = 0;
+const PROMETHEUS_CACHE_TTL = 300000; // 5 minutes
+
+// Global cache for disk metrics (25 second TTL, same as CPU/RAM)
+let diskMetricsCache = null;
+let diskMetricsCacheTime = 0;
 
 export default class SyncedMetricsNode extends ClusterNode {
   /**
@@ -94,6 +104,279 @@ export default class SyncedMetricsNode extends ClusterNode {
     }
     
     return null;
+  }
+
+  /**
+   * Auto-detect or use configured Prometheus endpoint
+   * Caches endpoint for 5 minutes to avoid repeated detection
+   * 
+   * @returns {Promise<string|null>} Prometheus API path or null if not available
+   */
+  async _getPrometheusEndpoint() {
+    const now = Date.now();
+    
+    // Return cached endpoint if still valid
+    if (prometheusEndpoint && (now - prometheusDetectionTime) < PROMETHEUS_CACHE_TTL) {
+      return prometheusEndpoint;
+    }
+    
+    try {
+      // Get configured endpoint from localStorage
+      const configuredEndpoint = getPrometheusEndpoint();
+      
+      if (!configuredEndpoint) {
+        return null;
+      }
+      
+      // Build full API path: /api/v1/namespaces/{namespace}/services/{service}/proxy
+      const fullPath = `/api/v1/namespaces/${configuredEndpoint}/proxy`;
+      const testUrl = `/k8s/clusters/local${fullPath}/api/v1/query?query=up&timeout=5s`;
+      
+      // Test if endpoint is accessible with a simple query
+      const response = await fetch(testUrl, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(5000) // 5 second timeout
+      });
+      
+      if (response.ok) {
+        const data = await response.json();
+        
+        // Cache successful endpoint
+        prometheusEndpoint = fullPath;
+        prometheusDetectionTime = now;
+        return fullPath;
+      } else {
+        console.warn(`[SyncedMetricsNode] Prometheus endpoint not accessible: ${response.status}`);
+        return null;
+      }
+    } catch (error) {
+      // Only warn on first failure (avoid spam)
+      if (!prometheusEndpoint) {
+        console.warn('[SyncedMetricsNode] Prometheus not available:', error.message);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * Fetch disk usage metrics from Prometheus for ALL nodes
+   * Queries once and caches results for all nodes (efficient)
+   * 
+   * Query: (1 - node_filesystem_avail_bytes / node_filesystem_size_bytes) * 100
+   * Returns percentage of disk used on root filesystem
+   * 
+   * @returns {Promise<Object|null>} Map of instance -> disk percentage, or null if unavailable
+   */
+  async _fetchDiskMetrics() {
+    const now = Date.now();
+    
+    // Return cached data if still fresh
+    if (diskMetricsCache && (now - diskMetricsCacheTime) < CACHE_TTL) {
+      return diskMetricsCache;
+    }
+    
+    try {
+      const endpoint = await this._getPrometheusEndpoint();
+      if (!endpoint) {
+        return null; // Prometheus not available
+      }
+      
+      // Query disk usage for ALL nodes at once (efficient!)
+      // Formula: (1 - available/size) * 100 = used percentage
+      // Filter by mountpoint="/" to get root filesystem only
+      const query = `(1 - (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"})) * 100`;
+      
+      const queryUrl = `/k8s/clusters/local${endpoint}/api/v1/query?query=${encodeURIComponent(query)}&timeout=10s`;
+      
+      const response = await fetch(queryUrl, {
+        method: 'GET',
+        headers: { 'Accept': 'application/json' },
+        signal: AbortSignal.timeout(10000) // 10 second timeout
+      });
+      
+      if (!response.ok) {
+        console.warn(`[SyncedMetricsNode] Prometheus query failed: ${response.status}`);
+        return null;
+      }
+      
+      const data = await response.json();
+      
+      // Check for valid response structure
+      if (!data.data || !data.data.result || !Array.isArray(data.data.result)) {
+        console.warn('[SyncedMetricsNode] Invalid Prometheus response structure');
+        return null;
+      }
+      
+      // Parse results into map: { "node-ip:port": diskPercentage }
+      const metricsMap = {};
+      data.data.result.forEach((item) => {
+        try {
+          const instance = item.metric?.instance; // e.g., "172.29.14.12:9100"
+          const diskPercent = parseFloat(item.value?.[1]);
+          
+          if (instance && !isNaN(diskPercent)) {
+            metricsMap[instance] = diskPercent;
+          }
+        } catch (error) {
+          // Skip invalid items silently
+        }
+      });
+      
+      // Update global cache (shared across all node instances)
+      diskMetricsCache = metricsMap;
+      diskMetricsCacheTime = now;
+      
+      return metricsMap;
+      
+    } catch (error) {
+      // Only log errors that aren't timeouts or network issues
+      if (error.name !== 'AbortError' && error.name !== 'TimeoutError') {
+        console.error('[SyncedMetricsNode] Error fetching disk metrics:', error);
+      }
+      return null;
+    }
+  }
+
+  /**
+   * Get disk usage percentage for this specific node
+   * Matches node by internal IP address
+   * 
+   * @returns {Promise<number|null>} Disk usage percentage (0-100) or null if unavailable
+   */
+  async getDiskUsage() {
+    try {
+      const metricsMap = await this._fetchDiskMetrics();
+      if (!metricsMap) {
+        return null;
+      }
+      
+      // Get node's internal IP
+      const nodeIp = this.internalIp;
+      if (!nodeIp) {
+        return null;
+      }
+      
+      // Match by IP address (ignore port number since it varies: 9100, 9796, etc.)
+      // Find the first instance key that starts with the node's IP
+      let diskPercent = null;
+      for (const [instanceKey, value] of Object.entries(metricsMap)) {
+        // Extract IP from instance key (format: "IP:port" or just "IP")
+        const instanceIp = instanceKey.split(':')[0];
+        if (instanceIp === nodeIp) {
+          diskPercent = value;
+          break;
+        }
+      }
+      
+      if (diskPercent !== undefined && !isNaN(diskPercent)) {
+        return diskPercent;
+      }
+      
+      return null;
+    } catch (error) {
+      console.error(`[SyncedMetricsNode] Error getting disk usage for ${this.nameDisplay}:`, error);
+      return null;
+    }
+  }
+
+  /**
+   * 🔍 DEBUG HELPER - Test Prometheus connection and disk metrics
+   * 
+   * Usage in browser console:
+   *   const node = $nuxt.$store.getters['cluster/all']('node')[0];
+   *   await node.debugDiskMetrics();
+   * 
+   * @returns {Promise<Object>} Debug information
+   */
+  async debugDiskMetrics() {
+    console.log('\n🔍 === DISK METRICS DEBUG ===\n');
+    
+    const debug = {
+      nodeInfo: {
+        name: this.nameDisplay,
+        internalIp: this.internalIp,
+        id: this.id
+      },
+      prometheusTest: null,
+      diskQueryTest: null,
+      cacheState: null,
+      recommendation: null
+    };
+    
+    try {
+      // Test 1: Prometheus Endpoint
+      console.log('1️⃣ Testing Prometheus endpoint...');
+      const endpoint = await this._getPrometheusEndpoint();
+      
+      if (!endpoint) {
+        debug.prometheusTest = { success: false, error: 'Endpoint detection failed' };
+        debug.recommendation = 'Check Prometheus endpoint in Settings. Default: ops/services/ops-prometheus-server:80';
+        console.error('❌ Prometheus endpoint not accessible');
+        console.log(debug);
+        return debug;
+      }
+      
+      debug.prometheusTest = { success: true, endpoint };
+      console.log(`✅ Prometheus endpoint: ${endpoint}`);
+      
+      // Test 2: Disk Query
+      console.log('\n2️⃣ Testing disk metrics query...');
+      const metricsMap = await this._fetchDiskMetrics();
+      
+      if (!metricsMap) {
+        debug.diskQueryTest = { success: false, error: 'Query returned null' };
+        debug.recommendation = 'Prometheus query failed. Check if node-exporter is installed.';
+        console.error('❌ Disk query failed');
+        console.log(debug);
+        return debug;
+      }
+      
+      const resultCount = Object.keys(metricsMap).length;
+      debug.diskQueryTest = { 
+        success: true, 
+        resultCount,
+        allInstances: Object.keys(metricsMap)
+      };
+      console.log(`✅ Query successful! Found ${resultCount} nodes with disk metrics`);
+      console.log('Available instances:', Object.keys(metricsMap));
+      
+      // Test 3: Match This Node
+      console.log('\n3️⃣ Matching this node...');
+      const instanceKey = `${this.internalIp}:9796`;
+      const diskPercent = metricsMap[instanceKey] || metricsMap[this.internalIp];
+      
+      if (diskPercent !== undefined && !isNaN(diskPercent)) {
+        debug.cacheState = {
+          matched: true,
+          instanceKey,
+          diskPercent: diskPercent.toFixed(1) + '%',
+          currentCache: this._diskUsageCache
+        };
+        console.log(`✅ Node matched! Disk usage: ${diskPercent.toFixed(1)}%`);
+      } else {
+        debug.cacheState = {
+          matched: false,
+          searchedKeys: [instanceKey, this.internalIp],
+          availableKeys: Object.keys(metricsMap).slice(0, 5)
+        };
+        debug.recommendation = `Node IP "${this.internalIp}" not found in Prometheus results. Check node-exporter labels.`;
+        console.error(`❌ No match found for ${this.internalIp}`);
+        console.log('Tried keys:', [instanceKey, this.internalIp]);
+        console.log('Available keys (first 5):', Object.keys(metricsMap).slice(0, 5));
+      }
+      
+    } catch (error) {
+      debug.error = error.message;
+      debug.recommendation = 'Unexpected error. Check console for details.';
+      console.error('❌ Debug error:', error);
+    }
+    
+    console.log('\n📊 Debug Summary:');
+    console.table(debug);
+    console.log('\n=== END DEBUG ===\n');
+    
+    return debug;
   }
 
   /**
@@ -291,6 +574,39 @@ export default class SyncedMetricsNode extends ClusterNode {
       return `${(usage / GiB).toFixed(2)} GiB`;
     }
     return `${Math.round(usage / MiB)} MiB`;
+  }
+
+  /**
+   * Disk Usage Percentage - From Prometheus (optional)
+   * 
+   * This is populated by loadMetrics() in the list component
+   * Returns string percentage for PercentageBar component compatibility
+   * 
+   * @returns {string|null} Disk usage percentage as string (e.g., "45.2") or null
+   */
+  get diskUsagePercentage() {
+    // This value is set by the list component after calling getDiskUsage()
+    const cached = this._diskUsageCache;
+    if (cached === null || cached === undefined) {
+      return null;
+    }
+    // Convert to string with 1 decimal place to match PercentageBar expected format
+    return cached.toFixed(1);
+  }
+
+  /**
+   * Helper: Get formatted disk usage for display
+   * Returns human-readable format like "45.2%" or "N/A"
+   * 
+   * @returns {string} Formatted disk usage
+   */
+  get diskUsageFormatted() {
+    const usage = this.diskUsagePercentage;
+    if (usage === null || usage === undefined) {
+      return 'N/A';
+    }
+    // diskUsagePercentage is already a string like "45.2"
+    return `${usage}%`;
   }
 
   /**

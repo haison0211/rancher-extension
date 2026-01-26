@@ -96,9 +96,10 @@ export default defineComponent({
     // This aligns with Rancher's WebSocket-based updates
     this.setupStoreWatch();
     
-    // Fallback polling for metrics-only updates (10s)
+    // Fallback polling for metrics-only updates (30s)
     // Since metrics.k8s.io doesn't support WebSocket watch
-    this.startPolling(10000);
+    // Reduced from 10s to 30s to minimize API spam - metrics don't change that frequently
+    this.startPolling(30000);
     
     // Listen to tab visibility changes for adaptive polling
     document.addEventListener('visibilitychange', this.handleVisibilityChange);
@@ -129,7 +130,7 @@ export default defineComponent({
     /**
      * Start polling with specified interval
      */
-    startPolling(interval: number = 10000) {
+    startPolling(interval: number = 30000) {
       this.stopPolling();
       this.refreshInterval = window.setInterval(() => {
         this.loadMetrics();
@@ -186,9 +187,8 @@ export default defineComponent({
         // Tab inactive → slow down to 60s to save resources
         this.startPolling(60000);
       } else {
-        // Tab active → back to 10s
-        // Don't refresh immediately to avoid duplicate with ongoing interval
-        this.startPolling(10000);
+        // Tab active → back to 30s (reduced from 10s)
+        this.startPolling(30000);
       }
     },
 

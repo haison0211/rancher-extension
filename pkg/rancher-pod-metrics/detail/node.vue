@@ -79,6 +79,12 @@ export default {
     this.startMetricsPolling();
   },
 
+  beforeUnmount() {
+    // CRITICAL: Stop polling when component is destroyed
+    // This prevents polling from continuing when navigating away from Node Detail
+    this.stopMetricsPolling();
+  },
+
   data() {
     const podSchema = this.$store.getters['cluster/schemaFor'](POD);
 
@@ -275,9 +281,11 @@ export default {
         clearInterval(this.refreshInterval);
       }
       
+      // Poll every 30s (reduced from 10s to minimize API spam)
+      // Pods metrics don't change as frequently as we poll
       this.refreshInterval = setInterval(() => {
         this.loadPodMetrics();
-      }, 10000); // 10s interval
+      }, 30000); // 30s interval (was 10000)
     },
     
     stopMetricsPolling() {

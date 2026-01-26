@@ -23,6 +23,7 @@ import { mapGetters } from 'vuex';
 import { PagTableFetchPageSecondaryResourcesOpts, PagTableFetchSecondaryResourcesOpts, PagTableFetchSecondaryResourcesReturns } from '@shell/types/components/paginatedResourceTable';
 import LabeledSelect from '@shell/components/form/LabeledSelect.vue';
 import { isSystemLabel, matchesLabelFilter, type NodeResource } from '../types/node-filter';
+import PrometheusSettings from '../components/PrometheusSettings.vue';
 
 export default defineComponent({
   name: 'ListNode',
@@ -31,7 +32,8 @@ export default defineComponent({
     PaginatedResourceTable,
     ResourceTable,
     Tag,
-    LabeledSelect
+    LabeledSelect,
+    PrometheusSettings
   },
 
   mixins: [metricPoller],
@@ -119,6 +121,28 @@ export default defineComponent({
         });
       }
 
+      // Add Disk % column after RAM column (if metrics are available)
+      if (this.canViewNodeMetrics) {
+        const ramIndex = headers.findIndex((h: any) => h.name === 'ram');
+        if (ramIndex !== -1) {
+          headers.splice(ramIndex + 1, 0, {
+            name:       'disk',
+            labelKey:   'node.list.disk',
+            label:      'Disk',
+            value:      'diskUsagePercentage',
+            sort:       ['diskUsagePercentage:desc'],
+            formatter:  'PercentageBar',
+            breakpoint: COLUMN_BREAKPOINTS.LAPTOP,
+            width:      120,
+            getValue:   (row: any) => {
+              const diskPercent = row.diskUsagePercentage;
+              // Return null if not available, PercentageBar will show "N/A"
+              return diskPercent !== null && diskPercent !== undefined ? diskPercent : null;
+            }
+          });
+        }
+      }
+
       return headers;
     },
 
@@ -140,6 +164,28 @@ export default defineComponent({
             search:     false,
             getValue:   (row: any) => row.podConsumedUsage
           });
+        }
+
+        // Add Disk % column after RAM column (if metrics are available)
+        if (this.canViewNodeMetrics) {
+          const ramIndex = paginationHeaders.findIndex((h: any) => h.name === 'ram');
+          if (ramIndex !== -1) {
+            paginationHeaders.splice(ramIndex + 1, 0, {
+              name:       'disk',
+              labelKey:   'node.list.disk',
+              label:      'Disk',
+              value:      'diskUsagePercentage',
+              sort:       false, // Disable sort for pagination (Prometheus data not in K8s)
+              search:     false,
+              formatter:  'PercentageBar',
+              breakpoint: COLUMN_BREAKPOINTS.LAPTOP,
+              width:      120,
+              getValue:   (row: any) => {
+                const diskPercent = row.diskUsagePercentage;
+                return diskPercent !== null && diskPercent !== undefined ? diskPercent : null;
+              }
+            });
+          }
         }
 
         return paginationHeaders;
@@ -198,12 +244,18 @@ export default defineComponent({
 
       // WORKAROUND: Rancher v2.13.1 has metrics cache bug (stores metrics for 20+ days)
       // Fetch fresh metrics directly from K8s API via model's initMetrics()
-      // This call is cached for 30s, so safe to call frequently without spamming API
+      // This call is cached for 15s, so safe to call frequently without spamming API
       if (this.kubeNodes.length > 0) {
         const firstNode = this.kubeNodes[0];
         if (firstNode && typeof firstNode.initMetrics === 'function') {
           try {
+            // Load CPU/RAM metrics from metrics.k8s.io
             await firstNode.initMetrics();
+            
+            // Load disk metrics from Prometheus (if available)
+            // This is optional and will gracefully fail if Prometheus is not configured
+            await this.loadDiskMetrics();
+            
             // Success - all nodes now share fresh cached metrics
             // No need to call store.dispatch, model getters will use fresh cache
             this.$forceUpdate();
@@ -246,6 +298,47 @@ export default defineComponent({
       }
 
       this.$forceUpdate();
+    },
+
+    /**
+     * Load disk usage metrics from Prometheus for all nodes
+     * This is called as part of loadMetrics() and runs in parallel with CPU/RAM
+     * 
+     * Gracefully handles Prometheus not being available - no errors, just null values
+     */
+    async loadDiskMetrics() {
+      if (!this.kubeNodes || this.kubeNodes.length === 0) {
+        return;
+      }
+
+      try {
+        // Use first node to trigger the shared cache fetch
+        const firstNode = this.kubeNodes[0];
+        if (firstNode && typeof firstNode.getDiskUsage === 'function') {
+          // This fetches ALL nodes' disk metrics in one Prometheus query
+          // and caches the results globally
+          await firstNode.getDiskUsage();
+          
+          // Now populate each node's _diskUsageCache from the global cache
+          // This is done synchronously since the data is already cached
+          await Promise.all(
+            this.kubeNodes.map(async (node: any) => {
+              if (typeof node.getDiskUsage === 'function') {
+                try {
+                  const diskPercent = await node.getDiskUsage();
+                  // Set cache value that diskUsagePercentage getter will use
+                  node._diskUsageCache = diskPercent;
+                } catch (error) {
+                  // Silent fail - disk metrics are optional
+                  node._diskUsageCache = null;
+                }
+              }
+            })
+          );
+        }
+      } catch (error) {
+        // Silent fail - Prometheus might not be configured (expected behavior)
+      }
     },
 
     toggleLabels(row: any) {
@@ -403,7 +496,7 @@ export default defineComponent({
 
 <template>
   <div>
-    <!-- Custom Label Filter Section -->
+    <!-- Custom Label Filter Section with Prometheus Settings -->
     <div class="label-filter-section mb-20">
       <div class="filter-row">
         <LabeledSelect
@@ -429,6 +522,12 @@ export default defineComponent({
         >
           {{ t('node.list.labelFilter.clear') }}
         </button>
+        
+        <!-- Prometheus Settings Button -->
+        <PrometheusSettings 
+          v-if="canViewNodeMetrics"
+          @saved="loadMetrics"
+        />
       </div>
       
       <div
@@ -597,6 +696,13 @@ export default defineComponent({
 </template>
 
 <style lang='scss' scoped>
+.node-list-header {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  padding: 10px 0;
+}
+
 .label-filter-section {
   background: var(--box-bg);
   border: 1px solid var(--border);
@@ -641,6 +747,11 @@ export default defineComponent({
       height: 40px;
       padding: 0 15px;
       white-space: nowrap;
+    }
+    
+    // Prometheus Settings button in filter row
+    .prometheus-settings {
+      margin-left: auto;
     }
   }
 
