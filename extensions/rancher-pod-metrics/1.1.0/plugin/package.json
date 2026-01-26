@@ -1,0 +1,19 @@
+{
+  "name": "rancher-pod-metrics",
+  "description": "Add CPU and RAM metrics columns to Pod Explorer",
+  "version": "1.1.0",
+  "private": false,
+  "rancher": true,
+  "engines": {
+    "node": ">=16"
+  },
+  "devDependencies": {
+    "@vue/cli-plugin-babel": "~5.0.0",
+    "@vue/cli-service": "~5.0.0",
+    "@vue/cli-plugin-typescript": "~5.0.0"
+  },
+  "files": [
+    "**/*"
+  ],
+  "main": "rancher-pod-metrics-1.1.0.umd.min.js"
+}

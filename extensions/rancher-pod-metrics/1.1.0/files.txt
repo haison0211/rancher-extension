@@ -1,0 +1,16 @@
+plugin/img/harvester.20240f8a.png
+plugin/package.json
+plugin/rancher-pod-metrics-1.1.0.umd.min.120.js
+plugin/rancher-pod-metrics-1.1.0.umd.min.120.js.map
+plugin/rancher-pod-metrics-1.1.0.umd.min.60.js
+plugin/rancher-pod-metrics-1.1.0.umd.min.60.js.map
+plugin/rancher-pod-metrics-1.1.0.umd.min.662.js
+plugin/rancher-pod-metrics-1.1.0.umd.min.662.js.map
+plugin/rancher-pod-metrics-1.1.0.umd.min.732.js
+plugin/rancher-pod-metrics-1.1.0.umd.min.732.js.map
+plugin/rancher-pod-metrics-1.1.0.umd.min.detail.js
+plugin/rancher-pod-metrics-1.1.0.umd.min.detail.js.map
+plugin/rancher-pod-metrics-1.1.0.umd.min.js
+plugin/rancher-pod-metrics-1.1.0.umd.min.js.map
+plugin/rancher-pod-metrics-1.1.0.umd.min.list.js
+plugin/rancher-pod-metrics-1.1.0.umd.min.list.js.map
