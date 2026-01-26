@@ -1,0 +1,12 @@
+plugin/img/harvester.20240f8a.png
+plugin/package.json
+plugin/rancher-node-filter-3.0.0.umd.min.37.js
+plugin/rancher-node-filter-3.0.0.umd.min.37.js.map
+plugin/rancher-node-filter-3.0.0.umd.min.60.js
+plugin/rancher-node-filter-3.0.0.umd.min.60.js.map
+plugin/rancher-node-filter-3.0.0.umd.min.870.js
+plugin/rancher-node-filter-3.0.0.umd.min.870.js.map
+plugin/rancher-node-filter-3.0.0.umd.min.js
+plugin/rancher-node-filter-3.0.0.umd.min.js.map
+plugin/rancher-node-filter-3.0.0.umd.min.list.js
+plugin/rancher-node-filter-3.0.0.umd.min.list.js.map
