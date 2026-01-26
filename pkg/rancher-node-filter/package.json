@@ -1,7 +1,7 @@
 {
   "name": "rancher-node-filter",
   "description": "Extend Node Explorer with label filtering, synchronized metrics (fixes CPU/RAM discrepancy + cache bug), and Prometheus disk usage monitoring",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "private": false,
   "rancher": {
     "annotations": {
