@@ -1,9 +1,13 @@
 # 🔍 Rancher Node Filter Extension
 
+**Version**: 3.0.1 | **Status**: Production Ready ✅
+
 Extension này mở rộng **Node Explorer** trong Rancher Dashboard với 3 tính năng chính:
 1. **Label Filtering**: Filter nodes theo labels
 2. **Synchronized Metrics**: Fix sự sai lệch CPU/RAM giữa Node List và Node Detail
 3. **Disk Usage Monitoring**: Hiển thị disk usage từ Prometheus (tùy chọn)
+
+> 🆕 **v3.0.1**: Fixed critical bug - Extension now works on ALL clusters (with or without Prometheus). See [CHANGELOG](./CHANGELOG.md) for details.
 
 ## ✨ Features
 
@@ -186,25 +190,51 @@ kubectl get svc -A | grep prometheus
 
 ## 🔍 Troubleshooting
 
+### Extension không load / Console errors?
+
+**Symptom**: `TypeError: Cannot read properties of undefined (reading 'resource-list')`
+
+**Solution**: 
+- Update to **v3.0.1 or later** - includes critical fixes for clusters without Prometheus
+- See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for comprehensive debug guide
+
 ### Disk metrics không hiển thị (n/a)
 
-**1. Kiểm tra Prometheus endpoint**:
+**Diagnostic checklist**:
+
+**1. Check Prometheus availability**:
 ```bash
-kubectl get svc -n ops ops-prometheus-server
+kubectl get svc --all-namespaces | grep -i prometheus
 ```
 
-**2. Test từ browser console**:
+**2. Test Prometheus endpoint**:
 ```javascript
+// In browser console
 fetch('/k8s/clusters/local/api/v1/namespaces/ops/services/ops-prometheus-server:80/proxy/api/v1/query?query=up')
   .then(r => r.json())
   .then(d => console.log('✅ Connected:', d))
   .catch(e => console.error('❌ Failed:', e));
 ```
 
-**3. Kiểm tra node-exporter**:
+**3. Check node-exporter**:
 ```bash
 kubectl get ds -A | grep node-exporter
 ```
+
+**Common solutions**:
+- 🔧 **Configure endpoint**: Click Settings button → Enter your Prometheus service path
+- 📦 **Install Prometheus**: Extension works without it, but no disk metrics
+- 📖 **Read full guide**: See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for detailed solutions
+
+### Quick Fixes
+
+| Issue | Quick Fix | Details |
+|-------|-----------|---------|
+| Extension not loading | Update to v3.0.1+ | [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#1-extension-not-loading--console-errors) |
+| Disk shows "n/a" | Configure Prometheus endpoint | [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#2-disk-metrics-not-showing-shows-na) |
+| CPU/RAM missing | Install metrics-server | [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#4-cpuram-metrics-not-showing) |
+| Stale data | Hard refresh (Cmd+Shift+R) | [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#7-metrics-stale--not-updating) |
+
 
 ## 📊 Performance
 
@@ -218,6 +248,14 @@ kubectl get ds -A | grep node-exporter
 - **Freshness**: Max 25s stale data
 
 ## 🚀 Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md) for full version history.
+
+### v3.0.1 (2026-01-26) 🔥 Critical Fix
+- 🐛 **FIXED**: Extension load failure on clusters without Prometheus
+- 🛡️ **ADDED**: Comprehensive null safety checks
+- ✅ **IMPROVED**: Works on ALL cluster types (with or without Prometheus)
+- 📖 **DOCS**: Added [TROUBLESHOOTING.md](./TROUBLESHOOTING.md)
 
 ### v3.0.0 (2026-01-25)
 - ✨ **NEW**: Prometheus disk usage monitoring
@@ -234,6 +272,14 @@ kubectl get ds -A | grep node-exporter
 ### v1.4.0
 - ✨ Label filtering
 - 📊 Basic metrics display
+
+---
+
+## 📚 Documentation
+
+- **[README.md](./README.md)** - Main documentation (you are here)
+- **[CHANGELOG.md](./CHANGELOG.md)** - Full version history with migration guides
+- **[TROUBLESHOOTING.md](./TROUBLESHOOTING.md)** - Comprehensive troubleshooting guide
 
 ---
 

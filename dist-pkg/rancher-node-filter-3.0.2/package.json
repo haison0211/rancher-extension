@@ -3,13 +3,7 @@
   "description": "Extend Node Explorer with label filtering, synchronized metrics (fixes CPU/RAM discrepancy + cache bug), and Prometheus disk usage monitoring",
   "version": "3.0.2",
   "private": false,
-  "rancher": {
-    "annotations": {
-      "catalog.cattle.io/rancher-version": ">= 2.8.0",
-      "catalog.cattle.io/ui-extensions-version": ">= 3.0.0 < 4.0.0"
-    }
-  },
-  "scripts": {},
+  "rancher": true,
   "engines": {
     "node": ">=16"
   },
@@ -18,9 +12,8 @@
     "@vue/cli-service": "~5.0.0",
     "@vue/cli-plugin-typescript": "~5.0.0"
   },
-  "browserslist": [
-    "> 1%",
-    "last 2 versions",
-    "not dead"
-  ]
+  "files": [
+    "**/*"
+  ],
+  "main": "rancher-node-filter-3.0.2.umd.min.js"
 }

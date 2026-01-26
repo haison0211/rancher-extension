@@ -19,8 +19,8 @@ export default function(plugin: IPlugin): void {
   // with synchronized metrics calculation (same as Node Detail view)
   importTypes(plugin);
 
-  // Provide plugin metadata from package.json
-  plugin.metadata = require('./package.json');
+  // NOTE: plugin.metadata is automatically loaded from package.json by Rancher
+  // No need to manually set it here
 
   // Register custom list component for Node resource
   // This overrides the default Node list view in Explorer
