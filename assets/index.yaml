@@ -31,6 +31,26 @@ entries:
       catalog.cattle.io/ui-component: plugins
       catalog.cattle.io/ui-extensions-version: '>= 3.0.0 < 4.0.0'
     apiVersion: v2
+    appVersion: 3.0.1
+    created: "2026-01-26T08:01:47.763643278Z"
+    description: Extend Node Explorer with label filtering, synchronized metrics (fixes
+      CPU/RAM discrepancy + cache bug), and Prometheus disk usage monitoring
+    digest: f62bd01493e264b16cd023ba7d3dfe2b6cc3905530bcb5183379e74c1e7b482a
+    name: rancher-node-filter
+    type: application
+    urls:
+    - assets/rancher-node-filter/rancher-node-filter-3.0.1.tgz
+    version: 3.0.1
+  - annotations:
+      catalog.cattle.io/certified: rancher
+      catalog.cattle.io/namespace: cattle-ui-plugin-system
+      catalog.cattle.io/os: linux
+      catalog.cattle.io/permits-os: linux, windows
+      catalog.cattle.io/rancher-version: '>= 2.8.0'
+      catalog.cattle.io/scope: management
+      catalog.cattle.io/ui-component: plugins
+      catalog.cattle.io/ui-extensions-version: '>= 3.0.0 < 4.0.0'
+    apiVersion: v2
     appVersion: 3.0.0
     created: "2026-01-26T03:58:01.599911788Z"
     description: Extend Node Explorer with label filtering, synchronized metrics (fixes
@@ -119,4 +139,4 @@ entries:
     urls:
     - assets/rancher-pod-metrics/rancher-pod-metrics-1.0.0.tgz
     version: 1.0.0
-generated: "2026-01-26T03:58:01.599346669Z"
+generated: "2026-01-26T08:01:47.763228197Z"
