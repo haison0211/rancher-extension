@@ -21,6 +21,7 @@
 import ClusterNode from '@shell/models/cluster/node';
 import { METRIC } from '@shell/config/types';
 import { parseSi } from '@shell/utils/units';
+import { NODE_SHELL_CONFIG } from '../../types/node-shell';
 
 // Defensive import - handle if prometheus-config fails to load
 let getPrometheusEndpoint;
@@ -811,5 +812,240 @@ export default class SyncedMetricsNode extends ClusterNode {
         }
       }
     };
+  }
+
+  /**
+   * Override available actions to add "Shell" action
+   * Similar to Pod's "Execute Shell" action
+   */
+  get _availableActions() {
+    const actions = super._availableActions || [];
+    
+    // Add "Shell" action
+    const shellAction = this.openShellMenuItem;
+    if (shellAction && shellAction.enabled) {
+      // Insert before "Delete" action
+      const deleteIndex = actions.findIndex(a => a.action === 'promptRemove');
+      if (deleteIndex > 0) {
+        actions.splice(deleteIndex, 0, { divider: true });
+        actions.splice(deleteIndex, 0, shellAction);
+      } else {
+        // Fallback: add after divider at the end
+        actions.push({ divider: true });
+        actions.push(shellAction);
+      }
+    }
+    
+    return actions;
+  }
+
+  /**
+   * Override availableActions to ensure Shell action is included in UI
+   * Parent class filters _availableActions, so we inject Shell action here
+   */
+  get availableActions() {
+    const parentActions = super.availableActions || [];
+    const shellAction = this.openShellMenuItem;
+    
+    // Skip if Shell action not enabled or already exists
+    if (!shellAction || !shellAction.enabled) {
+      return parentActions;
+    }
+    
+    const hasShell = parentActions.find(a => a?.action === 'openNodeShell');
+    if (hasShell) {
+      return parentActions;
+    }
+    
+    // Create new array and inject Shell action
+    const actions = [...parentActions];
+    
+    // Insert before Delete action if it exists
+    const deleteIndex = actions.findIndex(a => a?.action === 'promptRemove');
+    if (deleteIndex > 0) {
+      actions.splice(deleteIndex, 0, shellAction);
+    } else {
+      actions.push(shellAction);
+    }
+    
+    return actions;
+  }
+
+  /**
+   * Shell action menu item (Lens-equivalent)
+   * Only enabled when node is in Ready/Active state
+   */
+  get openShellMenuItem() {
+    const stateDisplay = this.stateDisplay || '';
+    const isReady = stateDisplay.toLowerCase() === 'active' || 
+                    stateDisplay.toLowerCase() === 'ready' ||
+                    this.state === 'active' ||
+                    this.state === 'ready';
+    
+    return {
+      action:  'openNodeShell',
+      enabled: isReady,
+      icon:    'icon-terminal',
+      label:   'Shell',
+      total:   1,
+    };
+  }
+
+  /**
+   * Open shell into this node (Lens-equivalent)
+   * Creates privileged pod with nsenter and opens terminal
+   * Similar to Pod.openShell() but creates privileged shell pod first
+   */
+  async openNodeShell() {
+    try {
+      const POD = 'pod';
+      const NAMESPACE_TYPE = 'namespace';
+      const nodeName = this.metadata.name;
+      const namespace = NODE_SHELL_CONFIG.NAMESPACE;
+      
+      // 1. Show loading notification
+      this.$dispatch('growl/info', {
+        title:   `Creating shell pod for ${this.nameDisplay}`,
+        message: 'Please wait...',
+        timeout: 3000
+      }, { root: true });
+      
+      // 2. Ensure namespace exists
+      try {
+        await this.$dispatch('cluster/find', {
+          type: NAMESPACE_TYPE,
+          id:   namespace,
+          opt:  { force: false }
+        }, { root: true });
+      } catch (error) {
+        // Namespace doesn't exist, create it
+        const ns = await this.$dispatch('cluster/create', {
+          type: NAMESPACE_TYPE,
+          metadata: { name: namespace }
+        }, { root: true });
+        await ns.save();
+      }
+      
+      // 3. Build pod manifest (Lens-compatible with auto-cleanup)
+      const podName = `node-shell-${Date.now().toString(36)}-${Math.random().toString(36).substr(2, 9)}`;
+      const now = new Date().toISOString();
+      
+      const podManifest = {
+        type: POD,
+        metadata: {
+          name: podName,
+          namespace,
+          labels: {
+            app: 'node-shell',
+            'app.kubernetes.io/managed-by': 'rancher-node-filter-extension',
+          },
+          annotations: {
+            'rancher-node-filter.io/target-node': nodeName,
+            'rancher-node-filter.io/created-at': now,
+          }
+        },
+        spec: {
+          nodeName, // Schedule directly to target node
+          hostPID: true,
+          hostIPC: true,
+          hostNetwork: true,
+          restartPolicy: 'Never',
+          terminationGracePeriodSeconds: 0,
+          priorityClassName: 'system-node-critical',
+          ttlSecondsAfterFinished: 300, // TTL Controller: Auto-delete 5 min after completion
+          tolerations: [
+            { operator: 'Exists' } // Tolerate all taints
+          ],
+          containers: [{
+            name: 'shell',
+            image: 'alpine:3.19',
+            command: ['nsenter'],
+            args: [
+              '-t', '1',     // Target PID 1 (init process)
+              '-m',          // Mount namespace
+              '-u',          // UTS namespace
+              '-i',          // IPC namespace
+              '-n',          // Network namespace
+              'sleep', '1800'  // 30 minutes - pod auto-terminates after timeout
+            ],
+            securityContext: {
+              privileged: true
+            },
+            resources: {}
+          }]
+        }
+      };
+      
+      // 4. Create pod directly via API (bypass model.save() to avoid spec.template error)
+      const created = await this.$dispatch('cluster/request', {
+        url: `/v1/pods/${namespace}`,
+        method: 'POST',
+        data: {
+          apiVersion: 'v1',
+          kind: 'Pod',
+          metadata: podManifest.metadata,
+          spec: podManifest.spec
+        }
+      }, { root: true });
+      
+      // 5. Fetch the created pod as a model object
+      const shellPod = await this.$dispatch('cluster/find', {
+        type: POD,
+        id: `${namespace}/${created.metadata.name}`,
+        opt: { force: true }
+      }, { root: true });
+      
+      // 6. Wait for pod to be ready (with timeout)
+      const maxWait = 60000; // 60 seconds
+      const checkInterval = 1000; // 1 second
+      const startTime = Date.now();
+      
+      while (Date.now() - startTime < maxWait) {
+        // Refresh pod state
+        const freshPod = await this.$dispatch('cluster/find', {
+          type: POD,
+          id: `${namespace}/${shellPod.metadata.name}`,
+          opt: { force: true }
+        }, { root: true });
+        
+        if (freshPod.status?.phase === 'Running') {
+          // 7. Open shell using pod's openShell method (same as regular pod)
+          if (typeof freshPod.openShell === 'function') {
+            freshPod.openShell('shell');
+          } else {
+            // Fallback: manually open ContainerShell
+            this.$dispatch('wm/open', {
+              id:        `${this.id}-shell`,
+              label:     `Shell: ${this.nameDisplay}`,
+              icon:      'terminal',
+              component: 'ContainerShell',
+              attrs:     {
+                pod: freshPod,
+                initialContainer: 'shell'
+              }
+            }, { root: true });
+          }
+          
+          return;
+        }
+        
+        if (freshPod.status?.phase === 'Failed') {
+          throw new Error(`Pod failed to start: ${freshPod.status?.message || 'Unknown error'}`);
+        }
+        
+        // Wait before next check
+        await new Promise(resolve => setTimeout(resolve, checkInterval));
+      }
+      
+      throw new Error('Timeout waiting for pod to be ready');
+      
+    } catch (error) {
+      console.error('[NodeShell] Failed to open shell:', error);
+      this.$dispatch('growl/error', {
+        title:   'Failed to open shell',
+        message: error.message || 'Unknown error',
+        timeout: 5000
+      }, { root: true });
+    }
   }
 }

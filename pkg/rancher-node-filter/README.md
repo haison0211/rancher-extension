@@ -1,13 +1,14 @@
 # 🔍 Rancher Node Filter Extension
 
-**Version**: 3.0.1 | **Status**: Production Ready ✅
+**Version**: 4.0.0 | **Status**: Production Ready ✅
 
-Extension này mở rộng **Node Explorer** trong Rancher Dashboard với 3 tính năng chính:
+Extension này mở rộng **Node Explorer** trong Rancher Dashboard với 4 tính năng chính:
 1. **Label Filtering**: Filter nodes theo labels
 2. **Synchronized Metrics**: Fix sự sai lệch CPU/RAM giữa Node List và Node Detail
 3. **Disk Usage Monitoring**: Hiển thị disk usage từ Prometheus (tùy chọn)
+4. **Shell into Node**: Lens-equivalent node shell access (v4.0.0) ⭐ NEW
 
-> 🆕 **v3.0.1**: Fixed critical bug - Extension now works on ALL clusters (with or without Prometheus). See [CHANGELOG](./CHANGELOG.md) for details.
+> 🆕 **v4.0.0**: Added Shell into Node feature - Direct shell access to node filesystem via privileged pod with nsenter. See [CHANGELOG](./CHANGELOG.md) for details.
 
 ## ✨ Features
 
@@ -29,7 +30,7 @@ Extension này mở rộng **Node Explorer** trong Rancher Dashboard với 3 tí
 - ✅ **EKS Norman Fix**: Không còn dùng Pod Requests cho EKS clusters từ Norman
 - ✅ **Cache Optimization**: 25 giây cache TTL (cân bằng giữa freshness và performance)
 
-### 3. Disk Usage Monitoring (v3.0.0+) ⭐ NEW
+### 3. Disk Usage Monitoring (v3.0.0+) ⭐
 - ✅ **Prometheus Integration**: Query disk metrics từ Prometheus node-exporter
 - ✅ **Configurable Endpoint**: Settings UI để cấu hình Prometheus service
 - ✅ **Graceful Degradation**: Hoạt động bình thường nếu Prometheus không khả dụng
@@ -37,6 +38,16 @@ Extension này mở rộng **Node Explorer** trong Rancher Dashboard với 3 tí
 - ✅ **Shared Cache**: 25 giây cache TTL (đồng bộ với CPU/RAM)
 - ✅ **Auto-refresh**: Tự động refresh mỗi 30 giây
 - ✅ **Flexible Matching**: Tự động match nodes theo IP bất kể port configuration
+
+### 4. Shell into Node (v4.0.0+) ⭐ NEW
+- ✅ **Lens-equivalent**: Tương tự tính năng "Shell into Node" của Lens IDE
+- ✅ **Direct Node Access**: Shell vào node filesystem (không phải container)
+- ✅ **Privileged Pod**: Tự động tạo privileged pod với nsenter
+- ✅ **Auto-cleanup**: Pod tự động xóa sau 30 phút hoặc khi complete
+- ✅ **Background Job**: Cleanup job chạy mỗi 5 phút để xóa old pods
+- ✅ **Node Namespace**: Pods tạo trong namespace `node-shell`
+- ✅ **System Priority**: Priority class `system-node-critical`
+- ✅ **Tolerate All**: Tolerate tất cả taints để chạy trên mọi node
 
 ## 🐛 Vấn đề được giải quyết
 
@@ -60,6 +71,7 @@ Extension này mở rộng **Node Explorer** trong Rancher Dashboard với 3 tí
 | CPU % | 95% (pod requests) | **53%** ✅ | 53% |
 | RAM % | 75% (capacity) | **55%** ✅ | 55% |
 | Disk % | N/A | **17.8%** ✅ | N/A |
+| Shell | N/A | **✅ Available** | N/A |
 
 ## 📍 Sử dụng
 
@@ -77,7 +89,43 @@ Filter được thêm vào trên Node list:
 - Filter nodes có label region chứa text us-west
 - Filter nodes có label node-type chứa text worker
 
-### 2. Disk Usage Configuration
+### 2. Shell into Node
+**URL**: /c/local/explorer/node
+
+**Cách sử dụng**:
+1. Click vào **3-dot menu** (⋮) ở cuối mỗi node row
+2. Chọn **"Shell"** từ dropdown menu
+3. Extension sẽ tự động:
+   - Tạo namespace `node-shell` (nếu chưa có)
+   - Tạo privileged pod với nsenter
+   - Đợi pod ready (60s timeout)
+   - Mở terminal window với shell access
+4. Test shell commands:
+   ```bash
+   hostname              # Node hostname
+   ps aux | head         # Node processes
+   df -h                 # Node disk usage
+   ip addr               # Node network interfaces
+   cat /etc/os-release   # OS information
+   ```
+
+**Pod Lifecycle**:
+- **Timeout**: Pod tự động complete sau 30 phút
+- **TTL**: Pod tự động xóa 5 phút sau khi complete (nếu cluster có TTL Controller)
+- **Background Cleanup**: Job chạy mỗi 5 phút để xóa:
+  - Pods đã complete/failed (xóa ngay)
+  - Pods cũ hơn 30 phút
+- **Manual Cleanup**: 
+  ```bash
+  kubectl delete pods -n node-shell --all
+  ```
+
+**Requirements**:
+- ✅ RBAC permissions: create pods, namespaces
+- ✅ Node must be in Ready/Active state
+- ✅ Cluster supports privileged pods
+
+### 3. Disk Usage Configuration
 **Cấu hình Prometheus endpoint** (lần đầu sử dụng):
 
 1. Click vào **Settings** button (gear icon) ở góc phải của filter row
@@ -250,6 +298,15 @@ kubectl get ds -A | grep node-exporter
 ## 🚀 Changelog
 
 See [CHANGELOG.md](./CHANGELOG.md) for full version history.
+
+### v4.0.0 (2026-02-02) 🚀 Major Feature Release
+- ✨ **NEW**: Shell into Node - Lens-equivalent node shell access
+- ✨ **NEW**: Auto-cleanup system for shell pods (3-layer strategy)
+- ✨ **NEW**: Background cleanup job runs every 5 minutes
+- 🛡️ **SECURITY**: Pods run with system-node-critical priority
+- 🧹 **CLEANUP**: Pods auto-delete after 30 minutes or on completion
+- 📖 **DOCS**: Comprehensive Shell into Node documentation
+- ⚙️ **CONFIG**: Pod namespace: `node-shell`, timeout: 30 minutes
 
 ### v3.0.1 (2026-01-26) 🔥 Critical Fix
 - 🐛 **FIXED**: Extension load failure on clusters without Prometheus

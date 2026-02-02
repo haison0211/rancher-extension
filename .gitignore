@@ -74,4 +74,5 @@ dashboard-master/
 rancher-main/
 
 # Locally built assets (extensions)
-# dist-pkg
+dist-pkg/
+dist-pkg/
