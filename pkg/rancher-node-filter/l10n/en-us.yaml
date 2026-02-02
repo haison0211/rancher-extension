@@ -7,6 +7,9 @@ node:
       labelValuePlaceholder: "Enter label value to filter..."
       clear: "Clear Filter"
       filteringBy: "Filtering by {key} contains '{value}' - {count} node(s) found"
+    prometheus:
+      insufficientPermissions: "Disk usage metrics unavailable"
+      rbacWarning: "Your account lacks permission to access Prometheus service proxy. Contact your administrator to add 'services/proxy' permission to view disk metrics."
 
 nodeFilter:
   prometheusSettings:

@@ -1,14 +1,14 @@
 # 🔍 Rancher Node Filter Extension
 
-**Version**: 4.0.0 | **Status**: Production Ready ✅
+**Version**: 4.0.1 | **Status**: Production Ready ✅
 
 Extension này mở rộng **Node Explorer** trong Rancher Dashboard với 4 tính năng chính:
 1. **Label Filtering**: Filter nodes theo labels
 2. **Synchronized Metrics**: Fix sự sai lệch CPU/RAM giữa Node List và Node Detail
 3. **Disk Usage Monitoring**: Hiển thị disk usage từ Prometheus (tùy chọn)
-4. **Shell into Node**: Lens-equivalent node shell access (v4.0.0) ⭐ NEW
+4. **Shell into Node**: Lens-equivalent node shell access (v4.0.0) ⭐
 
-> 🆕 **v4.0.0**: Added Shell into Node feature - Direct shell access to node filesystem via privileged pod with nsenter. See [CHANGELOG](./CHANGELOG.md) for details.
+> 🆕 **v4.0.1**: Graceful RBAC permission handling - Disk metrics now show friendly warning instead of errors for users without `services/proxy` permission. See [CHANGELOG](./CHANGELOG.md) for details.
 
 ## ✨ Features
 
@@ -34,10 +34,12 @@ Extension này mở rộng **Node Explorer** trong Rancher Dashboard với 4 tí
 - ✅ **Prometheus Integration**: Query disk metrics từ Prometheus node-exporter
 - ✅ **Configurable Endpoint**: Settings UI để cấu hình Prometheus service
 - ✅ **Graceful Degradation**: Hoạt động bình thường nếu Prometheus không khả dụng
+- ✅ **RBAC Permission Handling**: Warning banner cho users không có `services/proxy` permission (v4.0.1)
 - ✅ **Efficient Querying**: 1 request duy nhất cho tất cả nodes
 - ✅ **Shared Cache**: 25 giây cache TTL (đồng bộ với CPU/RAM)
 - ✅ **Auto-refresh**: Tự động refresh mỗi 30 giây
 - ✅ **Flexible Matching**: Tự động match nodes theo IP bất kể port configuration
+- ✅ **No Console Spam**: Cache negative results để tránh repeated 403 errors
 
 ### 4. Shell into Node (v4.0.0+) ⭐ NEW
 - ✅ **Lens-equivalent**: Tương tự tính năng "Shell into Node" của Lens IDE
@@ -148,6 +150,22 @@ Filter được thêm vào trên Node list:
 - Endpoint được lưu vào localStorage (persistent across sessions)
 - Nếu Prometheus không khả dụng, disk column sẽ hiển thị "n/a"
 - Click "Reset to Default" để quay về default endpoint
+
+**RBAC Requirements** (v4.0.1+):
+- ✅ **For Disk Metrics**: User cần permission `services/proxy` trong namespace chứa Prometheus
+- ⚠️ **Without Permission**: Warning banner hiển thị + disk metrics ẩn
+- 📖 **Permission Example**:
+  ```yaml
+  apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRole
+  metadata:
+    name: prometheus-disk-metrics
+  rules:
+  - apiGroups: [""]
+    resources: ["services/proxy"]
+    verbs: ["get", "create"]
+  ```
+- 🎯 **Graceful Degradation**: Feature tự động ẩn cho users không có permission (không báo lỗi)
 
 ## 🏗️ Kiến trúc
 
@@ -280,6 +298,7 @@ kubectl get ds -A | grep node-exporter
 |-------|-----------|---------|
 | Extension not loading | Update to v3.0.1+ | [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#1-extension-not-loading--console-errors) |
 | Disk shows "n/a" | Configure Prometheus endpoint | [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#2-disk-metrics-not-showing-shows-na) |
+| Permission warning banner | Contact admin for services/proxy permission | See RBAC Requirements above |
 | CPU/RAM missing | Install metrics-server | [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#4-cpuram-metrics-not-showing) |
 | Stale data | Hard refresh (Cmd+Shift+R) | [TROUBLESHOOTING.md](./TROUBLESHOOTING.md#7-metrics-stale--not-updating) |
 
@@ -298,6 +317,14 @@ kubectl get ds -A | grep node-exporter
 ## 🚀 Changelog
 
 See [CHANGELOG.md](./CHANGELOG.md) for full version history.
+
+### v4.0.1 (2026-02-02) 🐛 Permission Handling Fix
+- 🐛 **FIXED**: Graceful handling of insufficient RBAC permissions for Prometheus
+- ✅ **ADDED**: Warning banner for users without `services/proxy` permission
+- 🛡️ **IMPROVED**: Cache negative results to prevent API spam on 403 errors
+- 📝 **IMPROVED**: Changed console errors to info messages for permission issues
+- 🎯 **UX**: Clear message explaining permission requirements
+- 📖 **DOCS**: Added RBAC requirements documentation
 
 ### v4.0.0 (2026-02-02) 🚀 Major Feature Release
 - ✨ **NEW**: Shell into Node - Lens-equivalent node shell access

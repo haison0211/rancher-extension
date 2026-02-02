@@ -163,7 +163,15 @@ export default class SyncedMetricsNode extends ClusterNode {
         prometheusDetectionTime = now;
         return fullPath;
       } else {
-        console.warn(`[SyncedMetricsNode] Prometheus endpoint not accessible: ${response.status}`);
+        // Handle RBAC permission errors gracefully
+        if (response.status === 403) {
+          console.info('[SyncedMetricsNode] Disk metrics disabled: Insufficient permissions to access Prometheus service proxy');
+          // Cache negative result to avoid repeated 403 errors
+          prometheusEndpoint = null;
+          prometheusDetectionTime = now;
+        } else {
+          console.warn(`[SyncedMetricsNode] Prometheus endpoint not accessible: ${response.status}`);
+        }
         return null;
       }
     } catch (error) {

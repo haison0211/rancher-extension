@@ -2,6 +2,7 @@
 import PaginatedResourceTable from '@shell/components/PaginatedResourceTable.vue';
 import ResourceTable from '@shell/components/ResourceTable.vue';
 import Tag from '@shell/components/Tag.vue';
+import Banner from '@components/Banner/Banner.vue';
 import { PODS } from '@shell/config/table-headers';
 // @ts-ignore - metric-poller doesn't have type declarations
 import metricPoller from '@shell/mixins/metric-poller';
@@ -33,7 +34,8 @@ export default defineComponent({
     ResourceTable,
     Tag,
     LabeledSelect,
-    PrometheusSettings
+    PrometheusSettings,
+    Banner
   },
 
   mixins: [metricPoller],
@@ -78,6 +80,9 @@ export default defineComponent({
       selectedLabelKey: null,
       labelValue: '',
       allLabelKeys: [] as string[],
+      
+      // Prometheus disk metrics availability
+      prometheusAvailable: null, // null = unknown, true = available, false = permission denied
     };
   },
 
@@ -319,6 +324,11 @@ export default defineComponent({
           // and caches the results globally
           await firstNode.getDiskUsage();
           
+          // Prometheus is available if we got here without error
+          if (this.prometheusAvailable !== true) {
+            this.prometheusAvailable = true;
+          }
+          
           // Now populate each node's _diskUsageCache from the global cache
           // This is done synchronously since the data is already cached
           await Promise.all(
@@ -336,7 +346,11 @@ export default defineComponent({
             })
           );
         }
-      } catch (error) {
+      } catch (error: any) {
+        // Check if error is due to insufficient RBAC permissions
+        if (error?.status === 403 || error?.response?.status === 403) {
+          this.prometheusAvailable = false;
+        }
         // Silent fail - Prometheus might not be configured (expected behavior)
       }
     },
@@ -544,6 +558,18 @@ export default defineComponent({
         </span>
       </div>
     </div>
+
+    <!-- Warning banner for insufficient Prometheus permissions -->
+    <Banner
+      v-if="prometheusAvailable === false && canViewNodeMetrics"
+      color="warning"
+      class="mb-20"
+    >
+      <div>
+        <strong>{{ t('node.list.prometheus.insufficientPermissions') }}</strong>
+        <p>{{ t('node.list.prometheus.rbacWarning') }}</p>
+      </div>
+    </Banner>
 
     <PaginatedResourceTable
       v-if="!hasActiveFilter"
