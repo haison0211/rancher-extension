@@ -2,12 +2,21 @@ import { importTypes } from '@rancher/auto-import';
 import { IPlugin } from '@shell/core/types';
 
 /**
- * Rancher Node Filter Extension v4.0.0
+ * Rancher Node Filter Extension v5.0.0
  * 
- * Features:
+ * Unified extension combining Node management and Pod metrics features:
+ * 
+ * NODE FEATURES:
  * 1. Label Filtering: Filter nodes by custom labels in Node List
  * 2. Synchronized Metrics: Fix CPU/RAM metrics discrepancy between Node List and Node Detail
- * 3. Shell into Node: Lens-equivalent node shell feature (v4.0.0)
+ * 3. Disk Usage Monitoring: Prometheus integration for disk metrics
+ * 4. Shell into Node: Lens-equivalent node shell feature
+ * 5. RBAC Permission Handling: Graceful degradation for insufficient permissions
+ * 
+ * POD FEATURES:
+ * 6. Pod Metrics: CPU and RAM columns in Pod Explorer
+ * 7. Pod Metrics in Node Detail: CPU and RAM columns in Pods tab
+ * 8. Auto-refresh: 30s polling with adaptive behavior (60s inactive)
  * 
  * How it works:
  * - importTypes() auto-imports models from ./models/ folder
@@ -15,6 +24,7 @@ import { IPlugin } from '@shell/core/types';
  * - This ensures metrics in Node List match Node Detail (uses actual usage from metrics-server)
  * - Adds "Shell" action to node list for direct node access (creates pod + opens ContainerShell)
  * - Background cleanup job removes shell pods older than 30 minutes
+ * - Pod metrics fetched from metrics.k8s.io/v1beta1/pods API
  */
 
 // Background cleanup job for old shell pods
@@ -111,11 +121,24 @@ export default function(plugin: IPlugin): void {
   // Features:
   // - Custom label filtering
   // - Synchronized metrics display (via overridden Node model)
+  // - Prometheus disk usage monitoring
   plugin.register('list', 'node', () => import('./list/node.vue'));
 
-  // NOTE: DO NOT override detail component!
-  // Rancher's default node detail already shows Pods tab correctly.
-  // Our Shell action is available via 3-dot menu (⋮) in both list and detail views.
+  // Register custom list component for Pod resource
+  // This adds CPU and RAM metrics columns to Pod Explorer
+  // Features:
+  // - Pod metrics from metrics.k8s.io API
+  // - Auto-refresh every 30s (adaptive: 60s when tab inactive)
+  // - Sortable CPU/RAM columns
+  plugin.register('list', 'pod', () => import('./list/pod.vue'));
+
+  // Register custom detail component for Node resource
+  // This adds CPU and RAM metrics columns to Pods tab in Node Detail
+  // Features:
+  // - Pod metrics from metrics.k8s.io API  
+  // - Auto-refresh every 30s
+  // - Sortable CPU/RAM columns in Pods tab
+  plugin.register('detail', 'node', () => import('./detail/node.vue'));
   
   // NOTE: No need to register NodeShell component anymore
   // Shell functionality is handled directly in node model's openNodeShell() method

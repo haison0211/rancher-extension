@@ -1,18 +1,19 @@
-# 🔍 Rancher Node Filter Extension
+# 🔍 Rancher Node & Pod Extension
 
-**Version**: 4.0.2 | **Status**: Production Ready ✅
+**Version**: 5.0.0 | **Status**: Production Ready ✅
 
-Extension này mở rộng **Node Explorer** trong Rancher Dashboard với 4 tính năng chính:
+All-in-one extension mở rộng **Node Explorer** và **Pod Explorer** trong Rancher Dashboard với 5 tính năng chính:
 1. **Label Filtering**: Filter nodes theo labels
 2. **Synchronized Metrics**: Fix sự sai lệch CPU/RAM giữa Node List và Node Detail
 3. **Disk Usage Monitoring**: Hiển thị disk usage từ Prometheus (tùy chọn)
-4. **Shell into Node**: Lens-equivalent node shell access (v4.0.0) ⭐
+4. **Shell into Node**: Lens-equivalent node shell access ⭐
+5. **Pod Metrics**: CPU/RAM metrics trong Pod Explorer ⭐ NEW
 
-> 🆕 **v4.0.1**: Graceful RBAC permission handling - Disk metrics now show friendly warning instead of errors for users without `services/proxy` permission. See [CHANGELOG](./CHANGELOG.md) for details.
+> 🆕 **v5.0.0**: Merged Pod Metrics functionality - Now includes CPU/RAM columns in Pod Explorer! Consolidates `rancher-pod-metrics` extension into one unified solution.
 
 ## ✨ Features
 
-### 1. Label Filtering
+### 1. Label Filtering (Nodes)
 - ✅ **Label Key Dropdown**: Dropdown list chứa tất cả label keys có sẵn từ các nodes
 - ✅ **Label Value Filter**: Text field để nhập label value cần tìm
 - ✅ **Real-time Filtering**: Lọc ngay lập tức khi nhập
@@ -22,7 +23,7 @@ Extension này mở rộng **Node Explorer** trong Rancher Dashboard với 4 tí
 - ✅ **Smart Label Keys**: Tự động loại bỏ các system labels để UX sạch hơn
 - ✅ **Preserve Features**: Giữ nguyên sort, pagination, và tất cả features mặc định
 
-### 2. Synchronized Metrics (v1.4.0+)
+### 2. Synchronized Metrics (Nodes)
 - ✅ **Consistent CPU Usage**: Dùng actual usage từ metrics-server (như Node Detail)
 - ✅ **Consistent RAM Usage**: Dùng actual usage từ metrics-server (như Node Detail)
 - ✅ **Fixed RAM Capacity**: Dùng allocatable thay vì capacity (như Node Detail)
@@ -30,24 +31,36 @@ Extension này mở rộng **Node Explorer** trong Rancher Dashboard với 4 tí
 - ✅ **EKS Norman Fix**: Không còn dùng Pod Requests cho EKS clusters từ Norman
 - ✅ **Cache Optimization**: 25 giây cache TTL (cân bằng giữa freshness và performance)
 
-### 3. Disk Usage Monitoring (v3.0.0+) ⭐
+### 3. Disk Usage Monitoring (Nodes)
 - ✅ **Prometheus Integration**: Query disk metrics từ Prometheus node-exporter
 - ✅ **Configurable Endpoint**: Settings UI để cấu hình Prometheus service
 - ✅ **Graceful Degradation**: Hoạt động bình thường nếu Prometheus không khả dụng
-- ✅ **RBAC Permission Handling**: Warning banner cho users không có `services/proxy` permission (v4.0.1)
+- ✅ **RBAC Permission Handling**: Warning banner cho users không có `services/proxy` permission
 - ✅ **Efficient Querying**: 1 request duy nhất cho tất cả nodes
 - ✅ **Shared Cache**: 25 giây cache TTL (đồng bộ với CPU/RAM)
 - ✅ **Auto-refresh**: Tự động refresh mỗi 30 giây
 - ✅ **Flexible Matching**: Tự động match nodes theo IP bất kể port configuration
 - ✅ **No Console Spam**: Cache negative results để tránh repeated 403 errors
 
-### 4. Shell into Node (v4.0.0+) ⭐ NEW
+### 4. Shell into Node ⭐
 - ✅ **Lens-equivalent**: Tương tự tính năng "Shell into Node" của Lens IDE
 - ✅ **Direct Node Access**: Shell vào node filesystem (không phải container)
 - ✅ **Privileged Pod**: Tự động tạo privileged pod với nsenter
 - ✅ **Auto-cleanup**: Pod tự động xóa sau 30 phút hoặc khi complete
 - ✅ **Background Job**: Cleanup job chạy mỗi 5 phút để xóa old pods
 - ✅ **Node Namespace**: Pods tạo trong namespace `node-shell`
+- ✅ **System Priority**: Priority class `system-node-critical`
+- ✅ **Tolerate All**: Tolerate tất cả taints để chạy trên mọi node
+
+### 5. Pod Metrics ⭐ NEW (v5.0.0)
+- ✅ **CPU Column**: Hiển thị CPU usage với đơn vị vCPU (ví dụ: "0.98 vCPU")
+- ✅ **RAM Column**: Hiển thị Memory usage với đơn vị MiB/GiB  
+- ✅ **Auto-refresh**: Metrics tự động cập nhật mỗi 30 giây
+- ✅ **Adaptive Polling**: Tự động giảm xuống 60s khi tab không active
+- ✅ **Sortable**: Click vào header để sort ascending/descending
+- ✅ **Error Handling**: Xử lý gracefully khi metrics-server không available
+- ✅ **Loading State**: Hiển thị spinner khi đang fetch metrics
+- ✅ **WebSocket Integration**: Tự động refresh khi pods thay đổi
 - ✅ **System Priority**: Priority class `system-node-critical`
 - ✅ **Tolerate All**: Tolerate tất cả taints để chạy trên mọi node
 
