@@ -1,6 +1,6 @@
 # 🔍 Rancher Node Filter Extension
 
-**Version**: 4.0.1 | **Status**: Production Ready ✅
+**Version**: 4.0.2 | **Status**: Production Ready ✅
 
 Extension này mở rộng **Node Explorer** trong Rancher Dashboard với 4 tính năng chính:
 1. **Label Filtering**: Filter nodes theo labels

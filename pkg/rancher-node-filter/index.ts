@@ -113,10 +113,10 @@ export default function(plugin: IPlugin): void {
   // - Synchronized metrics display (via overridden Node model)
   plugin.register('list', 'node', () => import('./list/node.vue'));
 
-  // Register custom detail component for Node resource
-  // Handles ?mode=shell query parameter for Shell into Node feature
-  plugin.register('detail', 'node', () => import('./detail/node.vue'));
-
+  // NOTE: DO NOT override detail component!
+  // Rancher's default node detail already shows Pods tab correctly.
+  // Our Shell action is available via 3-dot menu (⋮) in both list and detail views.
+  
   // NOTE: No need to register NodeShell component anymore
   // Shell functionality is handled directly in node model's openNodeShell() method
   // It creates a pod and opens Rancher's built-in ContainerShell component
