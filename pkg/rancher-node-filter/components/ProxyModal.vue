@@ -8,7 +8,7 @@
  * Compatible with Rancher 2.13.1
  */
 
-import { defineComponent, ref, computed, watch, PropType } from 'vue';
+import { defineComponent, ref, computed, watch, nextTick, onUnmounted, PropType } from 'vue';
 import { useProxyRequest, validateProxyOptions, ProxyRequestOptions } from '../composables/useProxyRequest';
 import LabeledSelect from '@shell/components/form/LabeledSelect.vue';
 import Banner from '@components/Banner/Banner.vue';
@@ -61,6 +61,9 @@ export default defineComponent({
     const selectedPort = ref<string>(''); // Changed to string for v-model compatibility
     const customPort = ref<string | number>(''); // Can be string or number from input type="number"
     const httpPath = ref<string>('/');
+    
+    // Prevent infinite watcher loop
+    const isInternalUpdate = ref<boolean>(false);
     
     // Response display state
     const showResponse = ref<boolean>(false);
@@ -262,14 +265,20 @@ export default defineComponent({
       showResponse.value = false;
       
       try {
-        // Get axios from window (Rancher context)
-        const axios = (window as any).$nuxt?.$store?.$axios;
+        // Get axios from window (Rancher context) with multiple fallbacks
+        const axios = (window as any)?.$nuxt?.$store?.$axios || 
+                      (window as any)?.$axios ||
+                      (window as any)?.$nuxt?.$axios;
+        
         if (!axios) {
-          throw {
+          // Don't throw - set error state for graceful handling
+          error.value = {
             code: 'AXIOS_NOT_FOUND',
-            message: 'Axios instance not found',
-            details: 'Cannot access Rancher HTTP client. Please refresh the page.',
+            message: 'HTTP Client Unavailable',
+            details: 'Unable to access Rancher API client. Please reload the page or contact your administrator.',
           };
+          showResponse.value = true;
+          return;
         }
         
         const options: ProxyRequestOptions = {
@@ -395,18 +404,39 @@ export default defineComponent({
       }
     });
     
-    // Clear selected port when custom port is entered
+    // Clear selected port when custom port is entered (with loop prevention)
     watch(() => customPort.value, (newVal) => {
-      if (newVal) {
+      if (newVal && !isInternalUpdate.value) {
+        isInternalUpdate.value = true;
         selectedPort.value = '';
+        nextTick(() => {
+          isInternalUpdate.value = false;
+        });
       }
     });
     
-    // Clear custom port when port is selected from dropdown
+    // Clear custom port when port is selected from dropdown (with loop prevention)
     watch(() => selectedPort.value, (newVal) => {
-      if (newVal) {
+      if (newVal && !isInternalUpdate.value) {
+        isInternalUpdate.value = true;
         customPort.value = '';
+        nextTick(() => {
+          isInternalUpdate.value = false;
+        });
       }
+    });
+    
+    // Cleanup on component destroy
+    onUnmounted(() => {
+      // Clear large response data to prevent memory leak
+      response.value = null;
+      error.value = null;
+      
+      // Reset form state
+      selectedPort.value = '';
+      customPort.value = '';
+      httpPath.value = '/';
+      showResponse.value = false;
     });
     
     return {

@@ -8,6 +8,12 @@
  */
 
 import { ref, Ref } from 'vue';
+import { 
+  sanitizeClusterId, 
+  sanitizeNamespace, 
+  sanitizeResourceName,
+  validatePort 
+} from '../utils/sanitize';
 
 export interface ProxyRequestOptions {
   clusterId: string;
@@ -37,7 +43,7 @@ export interface ProxyError {
 }
 
 /**
- * Build safe proxy URL
+ * Build safe proxy URL with input sanitization
  */
 function buildProxyUrl(options: ProxyRequestOptions): string {
   const { clusterId, namespace, resourceType, resourceName, port, path } = options;
@@ -47,8 +53,21 @@ function buildProxyUrl(options: ProxyRequestOptions): string {
     throw new Error('Missing required parameters for proxy URL');
   }
   
-  // Ensure port is a string
-  const portStr = String(port);
+  // Sanitize Kubernetes resource names to prevent XSS/injection
+  const sanitizedCluster = sanitizeClusterId(clusterId);
+  const sanitizedNamespace = sanitizeNamespace(namespace);
+  const sanitizedResource = sanitizeResourceName(resourceName);
+  
+  // Validate sanitized values
+  if (!sanitizedCluster || !sanitizedNamespace || !sanitizedResource) {
+    throw new Error('Invalid resource identifiers after sanitization');
+  }
+  
+  // Validate port
+  const validatedPort = validatePort(port);
+  if (!validatedPort) {
+    throw new Error('Invalid port number');
+  }
   
   // Clean path - remove leading/trailing slashes, encode properly
   let cleanPath = (path || '/').trim();
@@ -64,10 +83,10 @@ function buildProxyUrl(options: ProxyRequestOptions): string {
   
   // Build URL based on resource type
   const resourceTypePlural = resourceType === 'pod' ? 'pods' : 'services';
-  const baseUrl = `/k8s/clusters/${clusterId}/api/v1/namespaces/${namespace}/${resourceTypePlural}`;
+  const baseUrl = `/k8s/clusters/${sanitizedCluster}/api/v1/namespaces/${sanitizedNamespace}/${resourceTypePlural}`;
   
   // Format: {name}:{port}
-  const resourceWithPort = `${resourceName}:${portStr}`;
+  const resourceWithPort = `${sanitizedResource}:${validatedPort}`;
   
   // Complete proxy URL
   return `${baseUrl}/${resourceWithPort}/proxy${encodedPath}`;

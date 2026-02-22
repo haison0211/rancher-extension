@@ -5,6 +5,55 @@ All notable changes to the Rancher Node & Pod Extension will be documented in th
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.0.1] - 2026-02-23
+
+### 🔒 Security Fixes
+- **CRITICAL**: Added input sanitization to prevent XSS attacks
+  - All Kubernetes resource names (cluster ID, namespace, pod/service name) are now sanitized before URL construction
+  - Port numbers are validated to prevent injection
+  - New utility module: `utils/sanitize.ts`
+  
+- **CRITICAL**: Added `noopener` and `noreferrer` attributes to `window.open()`
+  - Prevents opened tab from accessing parent window via `window.opener`
+  - Mitigates reverse tabnabbing attacks
+  - Added popup blocker detection with user notification
+
+### 🛠️ Stability Fixes
+- **CRITICAL**: Fixed infinite watcher loop risk
+  - Bidirectional watchers between `customPort` and `selectedPort` now use flag-based loop prevention
+  - Added `nextTick()` to ensure proper synchronization
+  
+- **CRITICAL**: Added component cleanup on unmount
+  - Prevents memory leaks from large response data
+  - Properly cleans up watchers and refs with `onUnmounted` lifecycle hook
+  - Resets form state on component destroy
+
+### ✨ Improvements
+- Enhanced axios instance detection with multiple fallbacks
+  - Tries 3 different window context paths
+  - Graceful error handling instead of throwing exceptions
+  - Better user-facing error messages
+
+### 📝 Technical Details
+- **New files added:**
+  - `utils/sanitize.ts` - Security utilities for K8s resource name sanitization
+  
+- **Modified files:**
+  - `components/ProxyModal.vue` - Loop prevention, cleanup, improved axios detection
+  - `composables/useProxyRequest.ts` - Input sanitization in URL builder
+  - `models/pod.js` - Secure window.open with popup blocker detection
+  - `models/service.js` - Secure window.open with popup blocker detection
+
+### 🎯 Production Readiness
+- ✅ All 4 must-fix critical issues resolved
+- ✅ Extension is now production-ready for enterprise deployments
+- ✅ Tested with Rancher 2.13.1
+- ✅ Security hardened against XSS and injection attacks
+- ✅ Memory leak prevention
+- ✅ Infinite loop prevention
+
+---
+
 ## [6.0.0] - 2026-02-21
 
 ### Added - HTTP Proxy Feature

@@ -50,7 +50,7 @@ export default class ExtendedService extends Service {
   }
   
   /**
-   * Execute proxy action - opens in new browser tab
+   * Execute proxy action - opens in new browser tab with security attributes
    */
   proxyHttpEndpoint() {
     const clusterId = this.$rootGetters['currentCluster']?.id || 'local';
@@ -65,8 +65,17 @@ export default class ExtendedService extends Service {
       type: 'service',
     });
     
-    // Open proxy page in new browser tab
+    // Open proxy page in new browser tab with security attributes
     const url = `/c/${clusterId}/explorer/service-proxy?${params.toString()}`;
-    window.open(url, '_blank');
+    const newWindow = window.open(url, '_blank', 'noopener,noreferrer');
+    
+    // Handle popup blocker
+    if (!newWindow) {
+      this.$dispatch('growl/error', {
+        title: 'Popup Blocked',
+        message: 'Please allow popups for this site to use the HTTP Proxy feature.',
+        timeout: 5000,
+      }, { root: true });
+    }
   }
 }
