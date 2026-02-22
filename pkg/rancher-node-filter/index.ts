@@ -2,9 +2,9 @@ import { importTypes } from '@rancher/auto-import';
 import { IPlugin } from '@shell/core/types';
 
 /**
- * Rancher Node Filter Extension v5.0.0
+ * Rancher Node & Pod Extension v6.0.0
  * 
- * Unified extension combining Node management and Pod metrics features:
+ * Unified extension for comprehensive Node and Pod management in Rancher 2.13.1
  * 
  * NODE FEATURES:
  * 1. Label Filtering: Filter nodes by custom labels in Node List
@@ -18,13 +18,24 @@ import { IPlugin } from '@shell/core/types';
  * 7. Pod Metrics in Node Detail: CPU and RAM columns in Pods tab
  * 8. Auto-refresh: 30s polling with adaptive behavior (60s inactive)
  * 
+ * HTTP PROXY FEATURES (v6.0.0):
+ * 9. HTTP Proxy for Pods: Test HTTP endpoints via Kubernetes API proxy
+ * 10. HTTP Proxy for Services: Test HTTP endpoints via Kubernetes API proxy
+ * 11. Multi-port Support: Handle pods/services with multiple ports
+ * 12. RBAC-aware Error Handling: Clear messages for permission issues
+ * 13. Timeout Protection: 10s timeout with AbortController
+ * 14. Response Size Limits: 1MB max with truncation warning
+ * 
  * How it works:
  * - importTypes() auto-imports models from ./models/ folder
  * - models/cluster/node.js overrides the default ClusterNode model
+ * - models/pod.js and models/service.js add HTTP Proxy actions
  * - This ensures metrics in Node List match Node Detail (uses actual usage from metrics-server)
  * - Adds "Shell" action to node list for direct node access (creates pod + opens ContainerShell)
+ * - Adds "Proxy HTTP Endpoint" action to pods and services for endpoint testing
  * - Background cleanup job removes shell pods older than 30 minutes
  * - Pod metrics fetched from metrics.k8s.io/v1beta1/pods API
+ * - HTTP Proxy uses /api/v1/namespaces/{ns}/{resource}/{name}:{port}/proxy/{path} pattern
  */
 
 // Background cleanup job for old shell pods
@@ -139,6 +150,28 @@ export default function(plugin: IPlugin): void {
   // - Auto-refresh every 30s
   // - Sortable CPU/RAM columns in Pods tab
   plugin.register('detail', 'node', () => import('./detail/node.vue'));
+  
+  // Register custom routes for HTTP Proxy feature (v6.0.0)
+  // These routes handle proxy pages opened in new browser tabs
+  plugin.addRoute({
+    name: 'pod-proxy',
+    path: '/c/:cluster/explorer/pod-proxy',
+    component: () => import('./pages/ProxyPage.vue'),
+    meta: {
+      product: 'explorer',
+      cluster: true,
+    },
+  });
+  
+  plugin.addRoute({
+    name: 'service-proxy',
+    path: '/c/:cluster/explorer/service-proxy',
+    component: () => import('./pages/ProxyPage.vue'),
+    meta: {
+      product: 'explorer',
+      cluster: true,
+    },
+  });
   
   // NOTE: No need to register NodeShell component anymore
   // Shell functionality is handled directly in node model's openNodeShell() method

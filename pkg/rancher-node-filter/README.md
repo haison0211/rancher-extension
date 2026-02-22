@@ -1,15 +1,16 @@
 # 🔍 Rancher Node & Pod Extension
 
-**Version**: 5.0.0 | **Status**: Production Ready ✅
+**Version**: 6.0.0 | **Status**: Production Ready ✅
 
-All-in-one extension mở rộng **Node Explorer** và **Pod Explorer** trong Rancher Dashboard với 5 tính năng chính:
+All-in-one extension mở rộng **Node Explorer** và **Pod Explorer** trong Rancher Dashboard với 6 tính năng chính:
 1. **Label Filtering**: Filter nodes theo labels
 2. **Synchronized Metrics**: Fix sự sai lệch CPU/RAM giữa Node List và Node Detail
 3. **Disk Usage Monitoring**: Hiển thị disk usage từ Prometheus (tùy chọn)
-4. **Shell into Node**: Lens-equivalent node shell access ⭐
-5. **Pod Metrics**: CPU/RAM metrics trong Pod Explorer ⭐ NEW
+4. **Shell into Node**: Lens-equivalent node shell access
+5. **Pod Metrics**: CPU/RAM metrics trong Pod Explorer
+6. **HTTP Proxy**: Test HTTP endpoints cho Pods và Services ⭐ NEW
 
-> 🆕 **v5.0.0**: Merged Pod Metrics functionality - Now includes CPU/RAM columns in Pod Explorer! Consolidates `rancher-pod-metrics` extension into one unified solution.
+> 🆕 **v6.0.0**: HTTP Proxy Feature - Test HTTP endpoints directly from Rancher UI! New "Proxy HTTP Endpoint" action available on Pods and Services. Fully compatible with Rancher 2.13.1.
 
 ## ✨ Features
 
@@ -52,7 +53,7 @@ All-in-one extension mở rộng **Node Explorer** và **Pod Explorer** trong Ra
 - ✅ **System Priority**: Priority class `system-node-critical`
 - ✅ **Tolerate All**: Tolerate tất cả taints để chạy trên mọi node
 
-### 5. Pod Metrics ⭐ NEW (v5.0.0)
+### 5. Pod Metrics ⭐ (v5.0.0)
 - ✅ **CPU Column**: Hiển thị CPU usage với đơn vị vCPU (ví dụ: "0.98 vCPU")
 - ✅ **RAM Column**: Hiển thị Memory usage với đơn vị MiB/GiB  
 - ✅ **Auto-refresh**: Metrics tự động cập nhật mỗi 30 giây
@@ -61,8 +62,21 @@ All-in-one extension mở rộng **Node Explorer** và **Pod Explorer** trong Ra
 - ✅ **Error Handling**: Xử lý gracefully khi metrics-server không available
 - ✅ **Loading State**: Hiển thị spinner khi đang fetch metrics
 - ✅ **WebSocket Integration**: Tự động refresh khi pods thay đổi
-- ✅ **System Priority**: Priority class `system-node-critical`
-- ✅ **Tolerate All**: Tolerate tất cả taints để chạy trên mọi node
+
+### 6. HTTP Proxy ⭐ NEW (v6.0.0)
+- ✅ **Pod HTTP Proxy**: Test HTTP endpoints directly on Pods
+- ✅ **Service HTTP Proxy**: Test HTTP endpoints directly on Services
+- ✅ **Multi-Port Support**: Automatic detection and selection for multiple ports
+- ✅ **Multi-Container Support**: Container selection for multi-container pods
+- ✅ **Custom Port Override**: Specify custom ports not defined in resource
+- ✅ **HTTP Methods**: Support for GET, POST, PUT, DELETE, PATCH
+- ✅ **Path Configuration**: Configurable HTTP path with proper encoding
+- ✅ **RBAC-Aware Errors**: Clear permission messages for 403 Forbidden
+- ✅ **Timeout Protection**: 10-second timeout with AbortController
+- ✅ **Response Limits**: 1MB max response with truncation warning
+- ✅ **Status Code Handling**: Graceful handling of 401, 403, 404, 503, 5xx
+- ✅ **Response Formatting**: Auto-detect JSON with syntax highlighting
+- ✅ **ExternalName Detection**: Disable proxy for ExternalName services
 
 ## 🐛 Vấn đề được giải quyết
 
@@ -179,6 +193,72 @@ Filter được thêm vào trên Node list:
     verbs: ["get", "create"]
   ```
 - 🎯 **Graceful Degradation**: Feature tự động ẩn cho users không có permission (không báo lỗi)
+
+### 4. HTTP Proxy Usage ⭐ NEW (v6.0.0)
+**Test HTTP endpoints trực tiếp trong Rancher UI:**
+
+**For Pods**:
+1. Navigate to **Pods** (Explorer → Workloads → Pods)
+2. Click **3-dot menu** (⋮) on any running pod
+3. Select **"Proxy HTTP Endpoint"**
+4. Modal sẽ mở với các options:
+   - **Container** (if multiple): Chọn container để test
+   - **Port** (if multiple): Chọn port hoặc nhập custom port
+   - **HTTP Path**: Nhập path (default `/`)
+   - **HTTP Method**: Chọn GET, POST, PUT, DELETE, PATCH
+5. Click **"Execute Proxy Request"**
+6. Xem response trực tiếp trong modal
+
+**For Services**:
+1. Navigate to **Services** (Explorer → Service Discovery → Services)
+2. Click **3-dot menu** (⋮) on any service
+3. Select **"Proxy HTTP Endpoint"**
+4. Modal sẽ mở với các options:
+   - **Port** (if multiple): Chọn service port
+   - **Custom Port**: Override với port khác (optional)
+   - **HTTP Path**: Nhập path (default `/`)
+   - **HTTP Method**: Chọn method
+5. Click **"Execute Proxy Request"**
+6. Xem response
+
+**Ví dụ Use Cases**:
+- Test health check endpoints: `/healthz`, `/ready`
+- Debug API responses: `/api/v1/status`
+- Verify service availability before ingress configuration
+- Test different HTTP methods on RESTful APIs
+- Check Pod/Service HTTP functionality without port-forward
+
+**Requirements**:
+- ✅ **For Pods**: RBAC permission `get` on `pods/proxy` subresource
+- ✅ **For Services**: RBAC permission `get` on `services/proxy` subresource
+- ✅ Pod must be in Running state
+- ✅ Service must have valid ports (not ExternalName type)
+- ✅ Port must be exposed on container/service
+
+**RBAC Permission Example**:
+```yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: http-proxy-user
+rules:
+- apiGroups: [""]
+  resources: ["pods/proxy", "services/proxy"]
+  verbs: ["get", "create"]
+```
+
+**Error Handling**:
+- **403 Forbidden**: Clear message về missing RBAC permissions
+- **404 Not Found**: Resource hoặc port không tồn tại
+- **Timeout**: Request quá 10 giây
+- **Large Response**: Response > 1MB sẽ bị truncate với warning
+
+**Limitations**:
+- Maximum response size: 1MB
+- Request timeout: 10 seconds
+- HTTP only (no HTTPS validation)
+- Cannot proxy WebSocket connections
+- Cannot set custom headers
 
 ## 🏗️ Kiến trúc
 

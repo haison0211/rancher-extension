@@ -1,7 +1,7 @@
 {
   "name": "rancher-node-filter",
-  "description": "Comprehensive Node & Pod management: Label filtering, synchronized metrics, Prometheus disk monitoring, Shell into Node (Lens-equivalent), and Pod CPU/RAM metrics in Explorer",
-  "version": "5.0.0",
+  "description": "Comprehensive Node & Pod management: Label filtering, synchronized metrics, Prometheus disk monitoring, Shell into Node, Pod CPU/RAM metrics, and HTTP Proxy for endpoint testing",
+  "version": "6.0.0",
   "private": false,
   "rancher": {
     "annotations": {
