@@ -59,14 +59,11 @@ export default class ExtendedPod extends Pod {
 
     // Emit window custom event to Pod List component
     // Vue 3 removed $root.$on/$off, so use window.dispatchEvent instead
-    const event = new CustomEvent('proxy-modal:open', {
+    window.dispatchEvent(new CustomEvent('proxy-modal:open', {
       detail: {
         resource: this,
         resourceType: 'pod',
       }
-    });
-    
-    window.dispatchEvent(event);
-    console.log('[Pod] Dispatched proxy-modal:open event');
+    }));
   }
 }

@@ -209,22 +209,17 @@ export default defineComponent({
     },
 
     /**
-     * Handle proxy modal open event from Pod/Service action (via window custom event)
+     * Handle proxy modal open event from Pod/Service action
      */
     handleProxyModalEvent(event: Event) {
       const customEvent = event as CustomEvent;
       const payload = customEvent.detail;
-      console.log('[PodList] Received proxy-modal:open event:', payload);
-      this.proxyResource = payload.resource;
-      this.proxyResourceType = payload.resourceType;
-      this.showProxyModal = true;
-    },
-    
-    /**
-     * Handle proxy modal open event from Pod/Service action (old $root.$emit version)
-     */
-    handleProxyModalOpen(payload: { resource: any; resourceType: 'pod' | 'service' }) {
-      console.log('[PodList] Received proxy-modal:open event:', payload);
+      
+      // Only handle pod events (service events go to service list)
+      if (payload.resourceType !== 'pod') {
+        return;
+      }
+      
       this.proxyResource = payload.resource;
       this.proxyResourceType = payload.resourceType;
       this.showProxyModal = true;

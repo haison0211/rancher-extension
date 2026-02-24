@@ -5,6 +5,25 @@ All notable changes to the Rancher Node & Pod Extension will be documented in th
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.1.1] - 2026-02-24
+
+### 🧹 Code Cleanup & Optimization
+
+**Removed Unnecessary Code**:
+- ❌ Deleted `pages/ProxyPage.vue` (unused route-based component)
+- ❌ Removed redundant `handleProxyModalOpen` method in `list/pod.vue`
+- ❌ Cleaned up console.log statements in production code
+
+**Optimized Event Handling**:
+- ✅ Simplified event listeners to only handle correct resource types
+- ✅ Reduced code duplication in models and list components
+- ✅ Improved modal structure - removed nested layers
+
+**Performance Improvements**:
+- Bundle size: 833 KiB (same as v6.1.0, but cleaner code)
+- No impact on existing features (Node Shell, Pod Metrics, Node Disk Metrics)
+- Maintained compatibility with Rancher 2.13.1
+
 ## [6.0.3] - 2026-02-24
 
 ### 🔧 Architecture Change (CRITICAL FIX)

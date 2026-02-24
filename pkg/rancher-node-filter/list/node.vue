@@ -22,7 +22,6 @@ import { COLUMN_BREAKPOINTS } from '@shell/types/store/type-map';
 
 import { mapGetters } from 'vuex';
 import { PagTableFetchPageSecondaryResourcesOpts, PagTableFetchSecondaryResourcesOpts, PagTableFetchSecondaryResourcesReturns } from '@shell/types/components/paginatedResourceTable';
-import LabeledSelect from '@shell/components/form/LabeledSelect.vue';
 import { isSystemLabel, matchesLabelFilter, type NodeResource } from '../types/node-filter';
 import PrometheusSettings from '../components/PrometheusSettings.vue';
 
@@ -33,7 +32,6 @@ export default defineComponent({
     PaginatedResourceTable,
     ResourceTable,
     Tag,
-    LabeledSelect,
     PrometheusSettings,
     Banner
   },
@@ -77,8 +75,8 @@ export default defineComponent({
       canViewNodeMetrics: !!this.$store.getters['cluster/schemaFor'](METRIC.NODE),
       
       // Label filter state
-      selectedLabelKey: null,
-      labelValue: '',
+      selectedLabelKey: '' as string,
+      selectedLabelValue: '' as string,
       allLabelKeys: [] as string[],
       
       // Prometheus disk metrics availability
@@ -203,7 +201,7 @@ export default defineComponent({
 
     // Check if label filter is active
     hasActiveFilter() {
-      return !!(this.selectedLabelKey && this.labelValue.trim());
+      return !!(this.selectedLabelKey && this.selectedLabelValue);
     },
 
     // All available label keys from all nodes
@@ -229,14 +227,37 @@ export default defineComponent({
       }));
     },
 
+    // All available label values for selected key
+    labelValueOptions() {
+      if (!this.selectedLabelKey) {
+        return [];
+      }
+
+      const values = new Set<string>();
+      const allNodes = this.$store.getters[`cluster/all`](this.resource) || [];
+      
+      allNodes.forEach((node: NodeResource) => {
+        const labels = node.metadata?.labels || {};
+        const value = labels[this.selectedLabelKey];
+        if (value !== undefined) {
+          values.add(value);
+        }
+      });
+
+      return Array.from(values).sort().map(value => ({
+        label: value,
+        value: value
+      }));
+    },
+
     // Filtered nodes based on label selection
     filteredRows() {
-      if (!this.selectedLabelKey || !this.labelValue.trim()) {
+      if (!this.selectedLabelKey || !this.selectedLabelValue) {
         return this.kubeNodes;
       }
 
       return this.kubeNodes.filter((node: NodeResource) => {
-        return matchesLabelFilter(node, this.selectedLabelKey, this.labelValue);
+        return matchesLabelFilter(node, this.selectedLabelKey, this.selectedLabelValue);
       });
     }
   },
@@ -474,8 +495,8 @@ export default defineComponent({
     },
 
     clearLabelFilter() {
-      this.selectedLabelKey = null;
-      this.labelValue = '';
+      this.selectedLabelKey = '';
+      this.selectedLabelValue = '';
     },
 
     async ensureAllNodesLoaded() {
@@ -495,6 +516,28 @@ export default defineComponent({
   },
 
   watch: {
+    // Watch for label key change and auto-fill value if only one option
+    selectedLabelKey(newKey, oldKey) {
+      // Only proceed if key actually changed
+      if (newKey !== oldKey) {
+        if (newKey) {
+          // Reset value when key changes
+          this.selectedLabelValue = '';
+          
+          // Auto-fill if only one value available
+          // Use setTimeout to ensure labelValueOptions is computed after selectedLabelValue is reset
+          setTimeout(() => {
+            if (this.labelValueOptions.length === 1) {
+              this.selectedLabelValue = this.labelValueOptions[0].value;
+            }
+          }, 0);
+        } else {
+          // Clear value when key is cleared
+          this.selectedLabelValue = '';
+        }
+      }
+    },
+    
     // Watch for filter activation and load all nodes
     hasActiveFilter: {
       handler(newVal) {
@@ -513,24 +556,45 @@ export default defineComponent({
     <!-- Custom Label Filter Section with Prometheus Settings -->
     <div class="label-filter-section mb-20">
       <div class="filter-row">
-        <LabeledSelect
-          v-model="selectedLabelKey"
-          :options="labelKeyOptions"
-          :label="t('node.list.labelFilter.labelKey')"
-          :placeholder="t('node.list.labelFilter.selectLabelKey')"
-          class="label-key-select"
-        />
+        <!-- Label Key Dropdown -->
+        <div class="label-key-select">
+          <label class="text-label">{{ t('node.list.labelFilter.labelKey') }}</label>
+          <select
+            v-model="selectedLabelKey"
+            class="form-control"
+          >
+            <option value="" disabled>{{ t('node.list.labelFilter.selectLabelKey') }}</option>
+            <option
+              v-for="option in labelKeyOptions"
+              :key="option.value"
+              :value="option.value"
+            >
+              {{ option.label }}
+            </option>
+          </select>
+        </div>
         
-        <input
-          v-model="labelValue"
-          type="text"
-          :placeholder="t('node.list.labelFilter.labelValuePlaceholder')"
-          :disabled="!selectedLabelKey"
-          class="label-value-input"
-        />
+        <!-- Label Value Dropdown -->
+        <div class="label-value-select">
+          <label class="text-label">{{ t('node.list.labelFilter.labelValue') }}</label>
+          <select
+            v-model="selectedLabelValue"
+            :disabled="!selectedLabelKey"
+            class="form-control"
+          >
+            <option value="" disabled>{{ t('node.list.labelFilter.selectLabelValue') }}</option>
+            <option
+              v-for="option in labelValueOptions"
+              :key="option.value"
+              :value="option.value"
+            >
+              {{ option.label }}
+            </option>
+          </select>
+        </div>
         
         <button
-          v-if="selectedLabelKey || labelValue"
+          v-if="selectedLabelKey || selectedLabelValue"
           class="btn role-secondary clear-filter-btn"
           @click="clearLabelFilter"
         >
@@ -545,14 +609,14 @@ export default defineComponent({
       </div>
       
       <div
-        v-if="selectedLabelKey && labelValue"
+        v-if="selectedLabelKey && selectedLabelValue"
         class="filter-info"
       >
         <i class="icon icon-info" />
         <span>
           {{ t('node.list.labelFilter.filteringBy', { 
             key: selectedLabelKey, 
-            value: labelValue,
+            value: selectedLabelValue,
             count: filteredRows.length 
           }) }}
         </span>
@@ -741,31 +805,44 @@ export default defineComponent({
     gap: 10px;
     align-items: flex-end;
 
-    .label-key-select {
+    .label-key-select,
+    .label-value-select {
       flex: 1;
       min-width: 200px;
       max-width: 300px;
-    }
-
-    .label-value-input {
-      flex: 1;
-      min-width: 200px;
-      max-width: 300px;
-      height: 40px;
-      padding: 0 10px;
-      border: 1px solid var(--border);
-      border-radius: var(--border-radius);
-      background: var(--input-bg);
-      color: var(--input-text);
       
-      &:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
+      .text-label {
+        display: block;
+        margin-bottom: 5px;
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--input-label);
       }
+      
+      .form-control {
+        width: 100%;
+        height: 40px;
+        padding: 0 10px;
+        border: 1px solid var(--border);
+        border-radius: var(--border-radius);
+        background: var(--input-bg);
+        color: var(--input-text);
+        font-size: 14px;
+        
+        &:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+          background: var(--disabled-bg);
+        }
 
-      &:focus {
-        outline: none;
-        border-color: var(--primary);
+        &:focus {
+          outline: none;
+          border-color: var(--primary);
+        }
+        
+        option {
+          padding: 8px;
+        }
       }
     }
 

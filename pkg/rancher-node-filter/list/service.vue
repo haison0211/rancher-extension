@@ -65,7 +65,6 @@ export default defineComponent({
         return;
       }
       
-      console.log('[ServiceList] Received proxy-modal:open event:', payload);
       this.proxyResource = payload.resource;
       this.proxyResourceType = payload.resourceType;
       this.showProxyModal = true;
