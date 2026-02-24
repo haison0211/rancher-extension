@@ -24,8 +24,6 @@
 
 <script lang="ts">
 import { defineComponent, ref, computed, onMounted } from 'vue';
-import { useRoute, useRouter } from 'vue-router';
-import { useStore } from 'vuex';
 import ProxyModal from '../components/ProxyModal.vue';
 import Banner from '@components/Banner/Banner.vue';
 
@@ -37,65 +35,74 @@ export default defineComponent({
     Banner,
   },
   
-  setup() {
-    const route = useRoute();
-    const router = useRouter();
-    const store = useStore();
+  data() {
+    return {
+      resource: null as any,
+      resourceLoading: true,
+      loadError: '',
+    };
+  },
+  
+  computed: {
+    // Get cluster from route params (from /c/:cluster path)
+    clusterId(): string {
+      return (this.$route.params.cluster as string) || 'local';
+    },
     
-    const resource = ref<any>(null);
-    const resourceLoading = ref(true);
-    const loadError = ref<string>('');
+    // Get namespace, name, type from query string
+    namespace(): string {
+      return this.$route.query.namespace as string;
+    },
     
-    // Get params from query string
-    const clusterId = computed(() => route.query.cluster as string || route.params.cluster as string);
-    const namespace = computed(() => route.query.namespace as string);
-    const name = computed(() => route.query.name as string);
-    const resourceType = computed(() => route.query.type as string || 'pod');
+    name(): string {
+      return this.$route.query.name as string;
+    },
     
+    resourceType(): string {
+      return (this.$route.query.type as string) || 'pod';
+    },
+  },
+  
+  async mounted() {
+    await this.loadResource();
+  },
+  
+  methods: {
     /**
      * Load resource from Rancher store
      */
-    onMounted(async () => {
+    async loadResource() {
       try {
-        const type = resourceType.value;
-        const id = `${namespace.value}/${name.value}`;
+        const type = this.resourceType;
+        const id = `${this.namespace}/${this.name}`;
         
         // Fetch resource from cluster store
-        resource.value = await store.dispatch('cluster/find', {
+        this.resource = await this.$store.dispatch('cluster/find', {
           type,
           id,
           opt: { force: true }
         });
         
-        resourceLoading.value = false;
+        this.resourceLoading = false;
       } catch (err: any) {
         console.error('[ProxyPage] Failed to load resource:', err);
-        loadError.value = err.message || 'Unknown error';
-        resourceLoading.value = false;
+        this.loadError = err.message || 'Unknown error';
+        this.resourceLoading = false;
       }
-    });
+    },
     
     /**
      * Handle close - go back or close tab
      */
-    const handleClose = () => {
+    handleClose() {
       // Try to go back in history
       if (window.history.length > 1) {
-        router.back();
+        this.$router.back();
       } else {
         // Close tab if opened via window.open()
         window.close();
       }
-    };
-    
-    return {
-      resource,
-      resourceLoading,
-      loadError,
-      clusterId,
-      resourceType,
-      handleClose,
-    };
+    },
   },
 });
 </script>

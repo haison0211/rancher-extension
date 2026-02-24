@@ -5,6 +5,49 @@ All notable changes to the Rancher Node & Pod Extension will be documented in th
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.0.2] - 2026-02-24
+
+### 🐛 Bug Fixes (Critical Production Issue)
+
+**404 Error when using HTTP Proxy feature in production Rancher**
+
+**Root Cause**: 
+- Route registration method incompatible with Rancher Extension routing system
+- Vue Router Composition API not properly injected in extension context
+- Duplicate cluster parameter in URL (both path and query string)
+
+**Fixes Applied**:
+
+1. **Route Registration Method** (`index.ts`)
+   - Changed: `plugin.addRoute()` → `plugin.addRoutes([])`
+   - Updated route names to follow Rancher convention: `c-cluster-explorer-pod-proxy`
+   - Ensures routes are properly registered in Rancher's routing table
+
+2. **Component API Migration** (`pages/ProxyPage.vue`)
+   - Changed: Vue 3 Composition API → Options API
+   - Replaced: `useRoute()`, `useRouter()`, `useStore()` → `this.$route`, `this.$router`, `this.$store`
+   - Reason: Composition API hooks not available in extension context
+
+3. **Route Parameter Cleanup** (`models/pod.js`, `models/service.js`)
+   - Removed cluster from query string (was: `?cluster=local&namespace=...`)
+   - Now only passes: `?namespace=scm&name=pod-name&type=pod`
+   - Cluster extracted from route path params: `/c/:cluster/explorer/...`
+
+4. **ProxyPage.vue Computed Properties**
+   - Changed: `this.$route.query.cluster` → `this.$route.params.cluster`
+   - Aligns with Vue Router dynamic segment pattern
+
+**Testing Evidence**:
+- ✅ Local dev mode (`yarn dev`): Works correctly
+- ✅ Production mode (installed extension): **FIXED** - No more 404 error
+- ✅ Route pattern: `/c/local/explorer/pod-proxy?namespace=scm&name=pod-123&type=pod`
+
+**Impact**:
+- **Before**: HTTP Proxy feature completely broken in production (404 error)
+- **After**: HTTP Proxy feature works identically in dev and production
+
+---
+
 ## [6.0.1] - 2026-02-23
 
 ### 🔒 Security Fixes

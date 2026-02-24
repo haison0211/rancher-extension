@@ -151,27 +151,29 @@ export default function(plugin: IPlugin): void {
   // - Sortable CPU/RAM columns in Pods tab
   plugin.register('detail', 'node', () => import('./detail/node.vue'));
   
-  // Register custom routes for HTTP Proxy feature (v6.0.0)
-  // These routes handle proxy pages opened in new browser tabs
-  plugin.addRoute({
-    name: 'pod-proxy',
-    path: '/c/:cluster/explorer/pod-proxy',
-    component: () => import('./pages/ProxyPage.vue'),
-    meta: {
-      product: 'explorer',
-      cluster: true,
+  // Register HTTP Proxy pages as Rancher pages (v6.0.0)
+  // CRITICAL: Extensions must use plugin.addRoutes() with proper Rancher route structure
+  // The routes are namespaced under /c/:cluster/explorer for cluster-scoped pages
+  plugin.addRoutes([
+    {
+      name: 'c-cluster-explorer-pod-proxy',
+      path: '/c/:cluster/explorer/pod-proxy',
+      component: () => import('./pages/ProxyPage.vue'),
+      meta: {
+        product: 'explorer',
+        cluster: true,
+      },
     },
-  });
-  
-  plugin.addRoute({
-    name: 'service-proxy',
-    path: '/c/:cluster/explorer/service-proxy',
-    component: () => import('./pages/ProxyPage.vue'),
-    meta: {
-      product: 'explorer',
-      cluster: true,
+    {
+      name: 'c-cluster-explorer-service-proxy',
+      path: '/c/:cluster/explorer/service-proxy',
+      component: () => import('./pages/ProxyPage.vue'),
+      meta: {
+        product: 'explorer',
+        cluster: true,
+      },
     },
-  });
+  ]);
   
   // NOTE: No need to register NodeShell component anymore
   // Shell functionality is handled directly in node model's openNodeShell() method
