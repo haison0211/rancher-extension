@@ -1,0 +1,19 @@
+{
+  "name": "rancher-node-filter",
+  "description": "Comprehensive Node & Pod management: Label filtering, synchronized metrics, Prometheus disk monitoring, Shell into Node, Pod CPU/RAM metrics, and HTTP Proxy for endpoint testing",
+  "version": "6.0.5",
+  "private": false,
+  "rancher": true,
+  "engines": {
+    "node": ">=16"
+  },
+  "devDependencies": {
+    "@vue/cli-plugin-babel": "~5.0.0",
+    "@vue/cli-service": "~5.0.0",
+    "@vue/cli-plugin-typescript": "~5.0.0"
+  },
+  "files": [
+    "**/*"
+  ],
+  "main": "rancher-node-filter-6.0.5.umd.min.js"
+}
