@@ -81,28 +81,11 @@ export default function(plugin: IPlugin): void {
 
   plugin.register('list', 'node', () => import('./list/node.vue'));
   plugin.register('list', 'pod', () => import('./list/pod.vue'));
+  plugin.register('list', 'service', () => import('./list/service.vue'));
   plugin.register('detail', 'node', () => import('./detail/node.vue'));
   
   startCleanupJob();
 
-  // Register routes for HTTP Proxy pages
-  plugin.addRoute({
-    name: 'pod-proxy',
-    path: '/c/:cluster/explorer/pod-proxy',
-    component: () => import(/* webpackChunkName: "proxy-page" */ './pages/ProxyPage.vue'),
-    meta: {
-      product: 'explorer',
-      cluster: true,
-    },
-  });
-
-  plugin.addRoute({
-    name: 'service-proxy',
-    path: '/c/:cluster/explorer/service-proxy',
-    component: () => import(/* webpackChunkName: "proxy-page" */ './pages/ProxyPage.vue'),
-    meta: {
-      product: 'explorer',
-      cluster: true,
-    },
-  });
+  // NOTE: HTTP Proxy now uses inline modal instead of routes
+  // No need to register routes - modal opens directly in Pod/Service list
 }

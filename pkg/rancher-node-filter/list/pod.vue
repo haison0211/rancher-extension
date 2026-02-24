@@ -1,6 +1,7 @@
 <script lang="ts">
 import { defineComponent } from 'vue';
 import ResourceTable from '@shell/components/ResourceTable.vue';
+import ProxyModal from '../components/ProxyModal.vue';
 import { fetchPodMetrics } from '../utils/metrics';
 import type { ParsedMetrics } from '../types/pod-metrics';
 
@@ -8,6 +9,7 @@ export default defineComponent({
   name: 'PodListWithMetrics',
   components: { 
     ResourceTable,
+    ProxyModal,
   },
 
   props: {
@@ -29,7 +31,12 @@ export default defineComponent({
       metricsError: null as string | null,
       refreshInterval: null as number | null,
       lastFetchTime: 0, // Track last fetch to prevent duplicate requests
-      storeUnwatch: null as any // Vuex store unwatch function
+      storeUnwatch: null as any, // Vuex store unwatch function
+      
+      // Proxy modal state
+      showProxyModal: false,
+      proxyResource: null as any,
+      proxyResourceType: 'pod' as 'pod' | 'service',
     };
   },
 
@@ -105,12 +112,19 @@ export default defineComponent({
     
     // Listen to tab visibility changes for adaptive polling
     document.addEventListener('visibilitychange', this.handleVisibilityChange);
+    
+    // Listen for proxy modal open events from Pod/Service actions
+    // Using window custom events instead of Vue event bus (Vue 3 removed $on/$off)
+    window.addEventListener('proxy-modal:open', this.handleProxyModalEvent);
   },
 
   beforeUnmount() {
     this.stopPolling();
     this.stopStoreWatch();
     document.removeEventListener('visibilitychange', this.handleVisibilityChange);
+    
+    // Clean up event listener
+    window.removeEventListener('proxy-modal:open', this.handleProxyModalEvent);
   },
 
   methods: {
@@ -195,6 +209,36 @@ export default defineComponent({
     },
 
     /**
+     * Handle proxy modal open event from Pod/Service action (via window custom event)
+     */
+    handleProxyModalEvent(event: Event) {
+      const customEvent = event as CustomEvent;
+      const payload = customEvent.detail;
+      console.log('[PodList] Received proxy-modal:open event:', payload);
+      this.proxyResource = payload.resource;
+      this.proxyResourceType = payload.resourceType;
+      this.showProxyModal = true;
+    },
+    
+    /**
+     * Handle proxy modal open event from Pod/Service action (old $root.$emit version)
+     */
+    handleProxyModalOpen(payload: { resource: any; resourceType: 'pod' | 'service' }) {
+      console.log('[PodList] Received proxy-modal:open event:', payload);
+      this.proxyResource = payload.resource;
+      this.proxyResourceType = payload.resourceType;
+      this.showProxyModal = true;
+    },
+
+    /**
+     * Close proxy modal
+     */
+    closeProxyModal() {
+      this.showProxyModal = false;
+      this.proxyResource = null;
+    },
+
+    /**
      * Load metrics from metrics.k8s.io API
      * Includes deduplication to prevent multiple simultaneous requests
      */
@@ -228,40 +272,63 @@ export default defineComponent({
 </script>
 
 <template>
-  <ResourceTable
-    :schema="schema"
-    :headers="headers"
-    key-field="id"
-  >
-    <!-- Custom cell formatters for CPU -->
-    <template #cell:cpu="{ row }">
-      <span v-if="metricsLoading && metricsMap.size === 0" class="text-muted">
-        <i class="icon icon-spinner icon-spin" />
-      </span>
-      <span v-else-if="metricsError" class="text-error" :title="metricsError">
-        Error
-      </span>
-      <span v-else :title="`${getMetricsForPod(row).cpu} millicores`">
-        {{ getMetricsForPod(row).cpuDisplay }}
-      </span>
-    </template>
+  <div class="pod-list-wrapper">
+    <ResourceTable
+      v-bind="$attrs"
+      :schema="schema"
+      :headers="headers"
+      key-field="id"
+    >
+      <!-- Custom cell formatters for CPU -->
+      <template #cell:cpu="{ row }">
+        <span v-if="metricsLoading && metricsMap.size === 0" class="text-muted">
+          <i class="icon icon-spinner icon-spin" />
+        </span>
+        <span v-else-if="metricsError" class="text-error" :title="metricsError">
+          Error
+        </span>
+        <span v-else :title="`${getMetricsForPod(row).cpu} millicores`">
+          {{ getMetricsForPod(row).cpuDisplay }}
+        </span>
+      </template>
 
-    <!-- Custom cell formatters for RAM -->
-    <template #cell:memory="{ row }">
-      <span v-if="metricsLoading && metricsMap.size === 0" class="text-muted">
-        <i class="icon icon-spinner icon-spin" />
-      </span>
-      <span v-else-if="metricsError" class="text-error" :title="metricsError">
-        Error
-      </span>
-      <span v-else :title="`${getMetricsForPod(row).memory} MiB`">
-        {{ getMetricsForPod(row).memoryDisplay }}
-      </span>
-    </template>
-  </ResourceTable>
+      <!-- Custom cell formatters for RAM -->
+      <template #cell:memory="{ row }">
+        <span v-if="metricsLoading && metricsMap.size === 0" class="text-muted">
+          <i class="icon icon-spinner icon-spin" />
+        </span>
+        <span v-else-if="metricsError" class="text-error" :title="metricsError">
+          Error
+        </span>
+        <span v-else :title="`${getMetricsForPod(row).memory} MiB`">
+          {{ getMetricsForPod(row).memoryDisplay }}
+        </span>
+      </template>
+    </ResourceTable>
+    
+    <!-- Inline HTTP Proxy Modal Overlay -->
+    <div v-if="showProxyModal" class="proxy-modal-overlay" @click.self="closeProxyModal">
+      <div class="proxy-modal-container">
+        <!-- ProxyModal component - contains all UI including close button -->
+        <ProxyModal
+          v-if="proxyResource"
+          :resource="proxyResource"
+          :resource-type="proxyResourceType"
+          :cluster-id="clusterId"
+          @close="closeProxyModal"
+        />
+      </div>
+    </div>
+  </div>
 </template>
 
 <style lang="scss" scoped>
+/* Wrapper để tránh multiple root nodes */
+.pod-list-wrapper {
+  width: 100%;
+  height: 100%;
+}
+
 .text-muted {
   color: var(--muted);
 }
@@ -278,5 +345,44 @@ export default defineComponent({
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+/* Inline Proxy Modal Overlay */
+.proxy-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000; // Above all other content
+  backdrop-filter: blur(2px);
+}
+
+.proxy-modal-container {
+  background-color: var(--body-bg);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  width: 95%;
+  max-width: 1200px;
+  max-height: 90vh;
+  overflow-y: auto;
+  animation: modal-slide-in 0.2s ease-out;
+  position: relative;
+  padding: 24px;
+}
+
+@keyframes modal-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 </style>

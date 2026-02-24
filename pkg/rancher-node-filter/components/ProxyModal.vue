@@ -477,7 +477,8 @@ export default defineComponent({
 </script>
 
 <template>
-  <div class="proxy-modal">
+  <div class="proxy-modal-content">
+    <!-- Modal Header -->
     <div class="modal-header">
       <h3>{{ resourceType === 'pod' ? 'Pod' : 'Service' }} HTTP Proxy</h3>
       <button
@@ -488,6 +489,7 @@ export default defineComponent({
       </button>
     </div>
     
+    <!-- Modal Body -->
     <div class="modal-body">
       <!-- Resource Info -->
       <div class="resource-info mb-20">
@@ -713,14 +715,10 @@ export default defineComponent({
 </template>
 
 <style lang="scss" scoped>
-.proxy-modal {
-  max-width: 900px;
-  max-height: 90vh;
+.proxy-modal-content {
   display: flex;
   flex-direction: column;
-  background: var(--body-bg);
-  border-radius: var(--border-radius);
-  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+  height: 100%;
 }
 
 .modal-header {

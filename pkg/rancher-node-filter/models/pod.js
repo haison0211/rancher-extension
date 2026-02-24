@@ -47,12 +47,9 @@ export default class ExtendedPod extends Pod {
   }
   
   /**
-   * Execute proxy action - opens new tab with security
+   * Execute proxy action - emit window custom event to open inline modal
    */
   proxyHttpEndpoint() {
-    const clusterId = this.$rootGetters['clusterId'];
-    const namespace = this.metadata?.namespace;
-    const name = this.metadata?.name;
     const podIP = this.status?.podIP;
 
     if (!podIP) {
@@ -60,20 +57,16 @@ export default class ExtendedPod extends Pod {
       return;
     }
 
-    // Build URL parameters
-    const params = new URLSearchParams({
-      namespace,
-      name,
-      ip: podIP,
-      type: 'pod',
-    }).toString();
-
-    // Open in new tab with security
-    const url = `/c/${clusterId}/explorer/pod-proxy?${params}`;
-    const popup = window.open(url, '_blank', 'noopener,noreferrer');
+    // Emit window custom event to Pod List component
+    // Vue 3 removed $root.$on/$off, so use window.dispatchEvent instead
+    const event = new CustomEvent('proxy-modal:open', {
+      detail: {
+        resource: this,
+        resourceType: 'pod',
+      }
+    });
     
-    if (!popup) {
-      console.error('[Pod] Popup blocked by browser');
-    }
+    window.dispatchEvent(event);
+    console.log('[Pod] Dispatched proxy-modal:open event');
   }
 }

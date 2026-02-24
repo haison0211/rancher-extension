@@ -50,12 +50,9 @@ export default class ExtendedService extends Service {
   }
   
   /**
-   * Execute proxy action - opens new tab with security
+   * Execute proxy action - emit window custom event to open inline modal
    */
   proxyHttpEndpoint() {
-    const clusterId = this.$rootGetters['clusterId'];
-    const namespace = this.metadata?.namespace;
-    const name = this.metadata?.name;
     const clusterIP = this.spec?.clusterIP;
 
     if (!clusterIP || clusterIP === 'None') {
@@ -63,20 +60,16 @@ export default class ExtendedService extends Service {
       return;
     }
 
-    // Build URL parameters
-    const params = new URLSearchParams({
-      namespace,
-      name,
-      ip: clusterIP,
-      type: 'service',
-    }).toString();
-
-    // Open in new tab with security
-    const url = `/c/${clusterId}/explorer/service-proxy?${params}`;
-    const popup = window.open(url, '_blank', 'noopener,noreferrer');
+    // Emit window custom event to Service List component
+    // Vue 3 removed $root.$on/$off, so use window.dispatchEvent instead
+    const event = new CustomEvent('proxy-modal:open', {
+      detail: {
+        resource: this,
+        resourceType: 'service',
+      }
+    });
     
-    if (!popup) {
-      console.error('[Service] Popup blocked by browser');
-    }
+    window.dispatchEvent(event);
+    console.log('[Service] Dispatched proxy-modal:open event');
   }
 }
