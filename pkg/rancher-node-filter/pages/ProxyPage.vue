@@ -1,20 +1,19 @@
 <template>
-  <div class="proxy-page">
-    <!-- Loading State -->
-    <div v-if="resourceLoading" class="loading-container">
-      <i class="icon icon-spinner icon-spin" />
-      <p>Loading resource...</p>
+  <div class="proxy-page-wrapper">
+    <h1 style="color: #0075ff; font-size: 24px; margin-bottom: 20px;">
+      🌐 HTTP Proxy
+    </h1>
+    
+    <div v-if="!namespace || !name" style="padding: 20px;">
+      <Banner color="error">
+        <p>Missing required parameters: namespace or name</p>
+      </Banner>
     </div>
     
-    <!-- Error State -->
-    <Banner v-else-if="loadError" color="error" class="mt-20">
-      <p>Failed to load resource: {{ loadError }}</p>
-    </Banner>
-    
-    <!-- Proxy Modal Content -->
-    <ProxyModal
-      v-else-if="resource"
-      :resource="resource"
+    <ProxyModalSimplified
+      v-else
+      :namespace="namespace"
+      :resource-name="name"
       :resource-type="resourceType"
       :cluster-id="clusterId"
       @close="handleClose"
@@ -23,33 +22,102 @@
 </template>
 
 <script lang="ts">
-import { defineComponent, ref, computed, onMounted } from 'vue';
-import ProxyModal from '../components/ProxyModal.vue';
+import { defineComponent } from 'vue';
 import Banner from '@components/Banner/Banner.vue';
 
-export default defineComponent({
-  name: 'ProxyPage',
+// Simple wrapper component that fetches resource internally
+const ProxyModalSimplified = defineComponent({
+  name: 'ProxyModalSimplified',
   
-  components: {
-    ProxyModal,
-    Banner,
+  props: {
+    namespace: { type: String, required: true },
+    resourceName: { type: String, required: true },
+    resourceType: { type: String, default: 'pod' },
+    clusterId: { type: String, default: 'local' },
   },
   
   data() {
     return {
       resource: null as any,
-      resourceLoading: true,
-      loadError: '',
+      loading: true,
+      error: '',
     };
   },
   
+  async mounted() {
+    console.log('[ProxyModalSimplified] Fetching resource:', {
+      type: this.resourceType,
+      namespace: this.namespace,
+      name: this.resourceName,
+    });
+    
+    try {
+      const type = this.resourceType;
+      const id = `${this.namespace}/${this.resourceName}`;
+      
+      this.resource = await this.$store.dispatch('cluster/find', {
+        type,
+        id,
+        opt: { force: true }
+      });
+      
+      console.log('[ProxyModalSimplified] Resource loaded:', this.resource?.metadata?.name);
+      this.loading = false;
+    } catch (err: any) {
+      console.error('[ProxyModalSimplified] Load failed:', err);
+      this.error = err.message || 'Failed to load resource';
+      this.loading = false;
+    }
+  },
+  
+  render(h: any) {
+    if (this.loading) {
+      return h('div', { style: 'padding: 40px; text-align: center;' }, [
+        h('i', { class: 'icon icon-spinner icon-spin', style: 'font-size: 48px;' }),
+        h('p', { style: 'margin-top: 20px;' }, 'Loading resource...'),
+      ]);
+    }
+    
+    if (this.error) {
+      const Banner = this.$options.components?.Banner;
+      return h('div', { style: 'padding: 20px;' }, [
+        h(Banner, { props: { color: 'error' } }, [
+          h('p', `Error: ${this.error}`),
+        ]),
+      ]);
+    }
+    
+    if (this.resource) {
+      const ProxyModal = require('../components/ProxyModal.vue').default;
+      return h(ProxyModal, {
+        props: {
+          resource: this.resource,
+          resourceType: this.resourceType,
+          clusterId: this.clusterId,
+        },
+        on: {
+          close: () => this.$emit('close'),
+        },
+      });
+    }
+    
+    return h('div', 'No resource');
+  },
+});
+
+export default defineComponent({
+  name: 'ProxyPage',
+  
+  components: {
+    Banner,
+    ProxyModalSimplified,
+  },
+  
   computed: {
-    // Get cluster from route params (from /c/:cluster path)
     clusterId(): string {
       return (this.$route.params.cluster as string) || 'local';
     },
     
-    // Get namespace, name, type from query string
     namespace(): string {
       return this.$route.query.namespace as string;
     },
@@ -63,49 +131,11 @@ export default defineComponent({
     },
   },
   
-  async mounted() {
-    console.log('[ProxyPage] Component mounted!', {
-      cluster: this.clusterId,
-      namespace: this.namespace,
-      name: this.name,
-      type: this.resourceType,
-    });
-    await this.loadResource();
-  },
-  
   methods: {
-    /**
-     * Load resource from Rancher store
-     */
-    async loadResource() {
-      try {
-        const type = this.resourceType;
-        const id = `${this.namespace}/${this.name}`;
-        
-        // Fetch resource from cluster store
-        this.resource = await this.$store.dispatch('cluster/find', {
-          type,
-          id,
-          opt: { force: true }
-        });
-        
-        this.resourceLoading = false;
-      } catch (err: any) {
-        console.error('[ProxyPage] Failed to load resource:', err);
-        this.loadError = err.message || 'Unknown error';
-        this.resourceLoading = false;
-      }
-    },
-    
-    /**
-     * Handle close - go back or close tab
-     */
     handleClose() {
-      // Try to go back in history
       if (window.history.length > 1) {
         this.$router.back();
       } else {
-        // Close tab if opened via window.open()
         window.close();
       }
     },
@@ -114,26 +144,9 @@ export default defineComponent({
 </script>
 
 <style lang="scss" scoped>
-.proxy-page {
-  height: 100vh;
-  overflow: auto;
-}
-
-.loading-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100vh;
-  
-  i {
-    font-size: 48px;
-    margin-bottom: 20px;
-  }
-  
-  p {
-    font-size: 18px;
-    color: var(--input-label);
-  }
+.proxy-page-wrapper {
+  padding: 40px;
+  background: white;
+  min-height: 100vh;
 }
 </style>
