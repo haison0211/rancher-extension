@@ -50,31 +50,33 @@ export default class ExtendedService extends Service {
   }
   
   /**
-   * Execute proxy action - opens in new browser tab with security attributes
+   * Execute proxy action - opens new tab with security
    */
   proxyHttpEndpoint() {
-    const clusterId = this.$rootGetters['currentCluster']?.id || 'local';
-    const namespace = this.metadata?.namespace || 'default';
-    const name = this.metadata?.name || 'unknown';
-    
-    // Build URL with query params to pass resource data
+    const clusterId = this.$rootGetters['clusterId'];
+    const namespace = this.metadata?.namespace;
+    const name = this.metadata?.name;
+    const clusterIP = this.spec?.clusterIP;
+
+    if (!clusterIP || clusterIP === 'None') {
+      console.error('[Service] No Cluster IP available');
+      return;
+    }
+
+    // Build URL parameters
     const params = new URLSearchParams({
       namespace,
       name,
+      ip: clusterIP,
       type: 'service',
-    });
+    }).toString();
+
+    // Open in new tab with security
+    const url = `/c/${clusterId}/explorer/service-proxy?${params}`;
+    const popup = window.open(url, '_blank', 'noopener,noreferrer');
     
-    // Open proxy page in new browser tab with security attributes
-    const url = `/c/${clusterId}/explorer/service-proxy?${params.toString()}`;
-    const newWindow = window.open(url, '_blank', 'noopener,noreferrer');
-    
-    // Handle popup blocker
-    if (!newWindow) {
-      this.$dispatch('growl/error', {
-        title: 'Popup Blocked',
-        message: 'Please allow popups for this site to use the HTTP Proxy feature.',
-        timeout: 5000,
-      }, { root: true });
+    if (!popup) {
+      console.error('[Service] Popup blocked by browser');
     }
   }
 }
