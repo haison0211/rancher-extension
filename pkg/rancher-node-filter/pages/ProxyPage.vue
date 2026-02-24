@@ -64,6 +64,12 @@ export default defineComponent({
   },
   
   async mounted() {
+    console.log('[ProxyPage] Component mounted!', {
+      cluster: this.clusterId,
+      namespace: this.namespace,
+      name: this.name,
+      type: this.resourceType,
+    });
     await this.loadResource();
   },
   

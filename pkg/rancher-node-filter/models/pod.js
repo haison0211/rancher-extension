@@ -55,7 +55,6 @@ export default class ExtendedPod extends Pod {
     const name = this.metadata?.name || 'unknown';
     
     // Build URL with query params to pass resource data
-    // NOTE: cluster is already in the path (/c/:cluster), so we only pass namespace, name, type
     const params = new URLSearchParams({
       namespace,
       name,

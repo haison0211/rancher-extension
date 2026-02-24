@@ -6,7 +6,9 @@ import type { ParsedMetrics } from '../types/pod-metrics';
 
 export default defineComponent({
   name: 'PodListWithMetrics',
-  components: { ResourceTable },
+  components: { 
+    ResourceTable,
+  },
 
   props: {
     // Standard props passed by Rancher to list components
