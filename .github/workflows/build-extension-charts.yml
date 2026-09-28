@@ -27,6 +27,8 @@ jobs:
       contents: write
       deployments: write
       pages: write
+      # rancher/dashboard's reusable workflow (@master) now requests it for its `release` job
+      pull-requests: write
     with:
       target_branch: gh-pages
       tagged_release: ${{ github.event.inputs.tagged_release || github.ref_name }}
