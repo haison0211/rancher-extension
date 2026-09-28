@@ -16,7 +16,11 @@ defaults:
     working-directory: ./
 
 jobs:
+  bundle-size:
+    uses: ./.github/workflows/bundle-size.yml
+
   build-extension-charts:
+    needs: bundle-size
     uses: rancher/dashboard/.github/workflows/build-extension-charts.yml@master
     permissions:
       actions: write

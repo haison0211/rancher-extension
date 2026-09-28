@@ -5,6 +5,45 @@ All notable changes to the Rancher Node & Pod Extension will be documented in th
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.0.0] - 2026-09-27
+
+Performance rewrite. See `FEATURES.md` (features, refresh intervals, native display fixes) and
+`TEST-CASES.md` at the repository root.
+
+### Fixed
+- **Deployment detail showed unrelated pods** (and inflated Services / Ingresses tabs). Cause: the
+  background shell-pod cleanup job ran `findAll pod` in every browser tab every 5 minutes; Rancher's
+  workload page then returned every pod in the store. The job is gone; the extension never loads pods
+  into the store outside Rancher's own node pages.
+- **Slow page load / F5**: entry chunk 853 KB → ~7 KB. Rancher waits for this file before rendering.
+  The `models/` overrides (pod, service, node) pulled the whole @shell model tree into it.
+- Pod CPU / RAM shown in one unit each: CPU always `0.000 vCPU` (3 decimals = 1 millicore, rounded up like
+  `kubectl top`), RAM in whole `MiB` below 1 GiB (`900 MiB`) and `GiB` with 2 decimals from 1 GiB (`12.06 GiB`), exact `kubectl top`
+  MiB in the tooltip; sorting always uses bytes, so mixed units still sort correctly. 6.2.1 sorted
+  memory as text ("900 MiB" above "1.50 GiB") and showed tiny usage as `0.00 vCPU`.
+- Pod CPU / RAM columns claimed to be sortable but sorted on a field that does not exist.
+- Pods without a metrics sample showed `0.00 vCPU` / `0 MiB` as if measured; they now show `—`.
+  Completed / Failed pods show a muted `0.000 vCPU` / `0 MiB` (no running container).
+- Node CPU / RAM differed between the node list and node detail (see FEATURES.md, native display fixes).
+- Node metrics URL was hard-coded to the `local` cluster.
+- Shell pods: `ttlSecondsAfterFinished` is not a Pod field; now `activeDeadlineSeconds: 1800`.
+
+### Changed
+- Pods and Services lists are Rancher's own lists again (server-side pagination restored). CPU / RAM are
+  added with `addTableColumn`, Proxy HTTP / Shell with `addAction` (end of the row menu).
+- New collapsible "Top pods by live usage" panel above the Pods list (sort by CPU or RAM).
+- Metrics are polled only while visible (30s CPU/RAM, 60s disk), paused in hidden tabs, one request at a
+  time, with backoff on errors. The Prometheus `query=up` probe is gone.
+- Node label filter matches exactly and runs server-side (`labelSelector`) when the SQL cache is on.
+
+- Release build trims for the node pages (`vue.config.js`): YAML diff view stubbed, `lodash` → `lodash-es`,
+  `cronstrue` stubbed, no `console` polyfill. Node list page 1.01 MB → 540 KB.
+- Metrics older than 2 poll intervals are shown as missing (spinner / N/A), never as current numbers.
+- Shell: tolerate 403 on the namespace check; cleanup only deletes pods labelled `app=node-shell`.
+
+### Removed
+- `models/`, `list/pod.vue`, `list/service.vue`, `components/NodeShell.vue`, `utils/metrics.ts`.
+
 ## [6.1.1] - 2026-02-24
 
 ### 🧹 Code Cleanup & Optimization

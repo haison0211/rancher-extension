@@ -4,11 +4,15 @@
  * 
  * Provides UI for testing HTTP endpoints on Pods and Services
  * via Rancher's Kubernetes API proxy mechanism.
- * 
- * Compatible with Rancher 2.13.1
+ *
+ * Opened as a Rancher dialog: `promptModal({ component: 'NodeFilterProxyModal', componentProps })`
+ * (see index.ts). PromptModal passes componentProps plus `resources` / `registerBackgroundClosing`
+ * and listens for `close`.
  */
 
-import { defineComponent, ref, computed, watch, nextTick, onUnmounted, PropType } from 'vue';
+import {
+  defineComponent, ref, computed, watch, nextTick, onUnmounted, getCurrentInstance, PropType
+} from 'vue';
 import { useProxyRequest, validateProxyOptions, ProxyRequestOptions } from '../composables/useProxyRequest';
 import LabeledSelect from '@shell/components/form/LabeledSelect.vue';
 import Banner from '@components/Banner/Banner.vue';
@@ -26,7 +30,7 @@ interface Port {
 }
 
 export default defineComponent({
-  name: 'ProxyModal',
+  name: 'NodeFilterProxyModal',
   
   components: {
     LabeledSelect,
@@ -49,12 +53,24 @@ export default defineComponent({
       type: String,
       required: true,
     },
+
+    // Passed by Rancher's PromptModal; unused here
+    resources: {
+      type:    Array,
+      default: () => []
+    },
+
+    registerBackgroundClosing: {
+      type:    Function,
+      default: () => {}
+    },
   },
-  
+
   emits: ['close'],
-  
+
   setup(props, { emit }) {
     const { loading, error, response, execute, reset } = useProxyRequest();
+    const store = (getCurrentInstance()?.proxy as any)?.$store;
     
     // Form state
     const selectedContainer = ref<string>('');
@@ -265,11 +281,8 @@ export default defineComponent({
       showResponse.value = false;
       
       try {
-        // Get axios from window (Rancher context) with multiple fallbacks
-        const axios = (window as any)?.$nuxt?.$store?.$axios || 
-                      (window as any)?.$axios ||
-                      (window as any)?.$nuxt?.$axios;
-        
+        const axios = store?.$axios;
+
         if (!axios) {
           // Don't throw - set error state for graceful handling
           error.value = {
@@ -331,7 +344,7 @@ export default defineComponent({
         const resourcePath = props.resourceType === 'pod' ? 'pods' : 'services';
         
         // Get full URL with domain
-        const origin = window.location.origin; // e.g., https://rancher.selless.com
+        const origin = window.location.origin; // e.g., https://rancher.example.com
         const proxyPath = `/k8s/clusters/${props.clusterId}/api/v1/namespaces/${namespace.value}/${resourcePath}/${resourceName}:${finalPort}/proxy${path}`;
         const fullUrl = `${origin}${proxyPath}`;
         
@@ -718,7 +731,9 @@ export default defineComponent({
 .proxy-modal-content {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  max-height: 85vh;
+  overflow-y: auto;
+  padding: 4px 8px;
 }
 
 .modal-header {

@@ -1,12 +1,21 @@
 <script lang="ts">
+/**
+ * Node list: verbatim copy of Rancher's shell/list/node.vue (identical in Rancher 2.13.1 and 2.14.3) plus
+ * - label key/value filter (server-side labelSelector when the list is paginated), off by default
+ * - Disk % column from Prometheus node_exporter
+ * - Display fix on Rancher's CPU / RAM columns (see FEATURES.md "Native display fixes"): same columns,
+ *   position, format and sort, but the value is live usage / allocatable from metrics.k8s.io, i.e. the
+ *   same number as `kubectl top nodes` and as the node detail page. Rancher's own value reads steve's
+ *   metrics cache (can be days old with vai) and divides RAM by capacity on the list but by allocatable
+ *   on the detail page.
+ *
+ * The Pods column works exactly like Rancher's: pods are loaded into the store and kept live by the
+ * websocket watch, and cleared again when the list is left (forgetType) so no other page sees them.
+ */
 import PaginatedResourceTable from '@shell/components/PaginatedResourceTable.vue';
-import ResourceTable from '@shell/components/ResourceTable.vue';
 import Tag from '@shell/components/Tag.vue';
 import Banner from '@components/Banner/Banner.vue';
 import { PODS } from '@shell/config/table-headers';
-// @ts-ignore - metric-poller doesn't have type declarations
-import metricPoller from '@shell/mixins/metric-poller';
-
 import { CAPI as CAPI_ANNOTATIONS } from '@shell/config/labels-annotations';
 
 import { defineComponent } from 'vue';
@@ -14,29 +23,50 @@ import { ActionFindPageArgs } from '@shell/types/store/dashboard-store.types';
 import { FilterArgs, PaginationFilterField, PaginationParamFilter } from '@shell/types/store/pagination.types';
 
 import {
-  CAPI,
-  MANAGEMENT, METRIC, NODE, NORMAN, POD
+  CAPI, MANAGEMENT, METRIC, NODE, NORMAN, POD
 } from '@shell/config/types';
-import { GROUP_RESOURCES, mapPref } from '@shell/store/prefs';
 import { COLUMN_BREAKPOINTS } from '@shell/types/store/type-map';
 
 import { mapGetters } from 'vuex';
 import { PagTableFetchPageSecondaryResourcesOpts, PagTableFetchSecondaryResourcesOpts, PagTableFetchSecondaryResourcesReturns } from '@shell/types/components/paginatedResourceTable';
-import { isSystemLabel, matchesLabelFilter, type NodeResource } from '../types/node-filter';
+
 import PrometheusSettings from '../components/PrometheusSettings.vue';
+import { isSystemLabel } from '../types/node-filter';
+import {
+  subscribeNodeMetrics, subscribeDiskMetrics, nodeUsage, diskUsageByIp, diskMetricsState, nodeMetricsState, resetDiskMetrics
+} from '../services/metrics-store';
+import { parseQuantity, toMillicores } from '../utils/quantity';
+import { defineSortKey, sortablePercent, sortGenerationWith } from '../utils/sort-keys';
+
+/** Node labels rarely change; refresh the dropdown options when they are older than this */
+const LABELS_MAX_AGE_MS = 60000;
+
+function percent(used: number | undefined, total: number): number | undefined {
+  if (used === undefined || !total) {
+    return undefined;
+  }
+
+  return (used * 100) / total;
+}
+
+/** PercentageBar formatter input: '' renders as N/A */
+function percentString(value: number | undefined): string {
+  return value === undefined ? '' : `${ value }`;
+}
+
+const SORT_KEY_CPU = 'nodeFilterCpuPercent';
+const SORT_KEY_RAM = 'nodeFilterRamPercent';
+const SORT_KEY_DISK = 'nodeFilterDiskPercent';
 
 export default defineComponent({
   name: 'ListNode',
 
   components: {
     PaginatedResourceTable,
-    ResourceTable,
     Tag,
+    Banner,
     PrometheusSettings,
-    Banner
   },
-
-  mixins: [metricPoller],
 
   props: {
     resource: {
@@ -62,8 +92,7 @@ export default defineComponent({
 
   data() {
     return {
-      // Pods required for `Pods` column's running pods metrics
-      // podConsumedUsage = podConsumed / podConsumedUsage. podConsumed --> pods. allPods.filter((pod) => pod.spec.nodeName === this.name)
+      // Pods column (running pods / capacity)
       canViewPods:        !!this.$store.getters[`cluster/schemaFor`](POD),
       // Norman node required for Drain/Cordon/Uncordon action
       canViewNormanNodes: !!this.$store.getters[`rancher/schemaFor`](NORMAN.NODE),
@@ -71,309 +100,264 @@ export default defineComponent({
       canViewMgmtNodes:   !!this.$store.getters[`management/schemaFor`](MANAGEMENT.NODE),
       // Required for ssh / download key actions
       canViewMachines:    !!this.$store.getters[`management/schemaFor`](CAPI.MACHINE),
-      // Required for CPU and RAM columns
+      // metrics-server is installed (CPU and RAM columns)
       canViewNodeMetrics: !!this.$store.getters['cluster/schemaFor'](METRIC.NODE),
-      
-      // Label filter state
-      selectedLabelKey: '' as string,
-      selectedLabelValue: '' as string,
-      allLabelKeys: [] as string[],
-      
-      // Prometheus disk metrics availability
-      prometheusAvailable: null, // null = unknown, true = available, false = permission denied
+
+      // Label filter
+      selectedLabelKey:   '',
+      selectedLabelValue: '',
+      /** labels of every node, used for the dropdown options only */
+      nodeLabels:         [] as Record<string, string>[],
+      labelsFetchedAt:    0,
+
+      releaseFns: [] as (() => void)[],
+
+      // Adds the live sort keys to every row and re-sorts when live numbers change (see utils/sort-keys.ts)
+      sortGenerationFn: sortGenerationWith(
+        () => this.decorateRowsForSort(),
+        () => nodeMetricsState.fetchedAt,
+        () => diskMetricsState.fetchedAt
+      ),
     };
   },
 
+  mounted() {
+    const clusterId = this.$store.getters['clusterId'];
+
+    if (this.canViewNodeMetrics) {
+      this.releaseFns.push(subscribeNodeMetrics(this.$store, clusterId));
+    }
+    this.releaseFns.push(subscribeDiskMetrics(this.$store, clusterId));
+
+    this.loadNodeLabels();
+  },
+
   beforeUnmount() {
-    // Stop watching pods, nodes and node metrics
+    this.releaseFns.forEach((release) => release());
+    this.releaseFns = [];
+    // Same as Rancher's node list: stop watching and drop pods / nodes, so the pods loaded for the
+    // Pods column never leak into other pages (e.g. a Deployment's pod list)
     if (this.canViewPods) {
       this.$store.dispatch('cluster/forgetType', POD);
     }
-
     this.$store.dispatch('cluster/forgetType', NODE);
-    this.$store.dispatch('cluster/forgetType', METRIC.NODE);
   },
 
   computed: {
     ...mapGetters(['currentCluster']),
 
-    kubeNodes() {
-      // Get nodes from store
-      // Note: when server-side pagination is used, this only contains the current page
-      // When label filter is active, all nodes are loaded via ensureAllNodesLoaded()
+    kubeNodes(): any[] {
+      // Note if server side pagination is used this is only the current page
       return this.$store.getters[`cluster/all`](this.resource) || [];
     },
 
-    tableGroup: mapPref(GROUP_RESOURCES),
-
-    canPaginate() {
-      const args = { id: this.resource?.id || this.resource };
-
-      return this.resource && this.$store.getters[`cluster/paginationEnabled`]?.(args);
+    hasWindowsNodes(): boolean {
+      return this.kubeNodes.some((node: any) => node.status?.nodeInfo?.operatingSystem === 'windows');
     },
 
-    headers() {
-      // This is all about adding the pods column... if the user can see pods
-      const headers = [...this.$store.getters['type-map/headersFor'](this.schema, false)];
+    canPaginate(): boolean {
+      const args = { id: (this.resource as any)?.id || this.resource };
 
-      if (this.canViewPods) {
-        headers.splice(headers.length - 1, 0, {
-          ...PODS,
-          breakpoint: COLUMN_BREAKPOINTS.DESKTOP,
-          getValue:   (row: any) => row.podConsumedUsage
-        });
-      }
-
-      // Add Disk % column after RAM column (if metrics are available)
-      if (this.canViewNodeMetrics) {
-        const ramIndex = headers.findIndex((h: any) => h.name === 'ram');
-        if (ramIndex !== -1) {
-          headers.splice(ramIndex + 1, 0, {
-            name:       'disk',
-            labelKey:   'node.list.disk',
-            label:      'Disk',
-            value:      'diskUsagePercentage',
-            sort:       ['diskUsagePercentage:desc'],
-            formatter:  'PercentageBar',
-            breakpoint: COLUMN_BREAKPOINTS.LAPTOP,
-            width:      120,
-            getValue:   (row: any) => {
-              const diskPercent = row.diskUsagePercentage;
-              // Return null if not available, PercentageBar will show "N/A"
-              return diskPercent !== null && diskPercent !== undefined ? diskPercent : null;
-            }
-          });
-        }
-      }
-
-      return headers;
+      return !!this.resource && !!this.$store.getters[`cluster/paginationEnabled`]?.(args);
     },
 
-    paginationHeaders() {
-      // This is all about adding the pods column... if the user can see pods
+    headers(): any[] {
+      return this.decorateHeaders(this.$store.getters['type-map/headersFor'](this.schema, false), false);
+    },
 
+    paginationHeaders(): any[] {
       if (!this.canPaginate) {
         return [];
       }
 
-      const paginationHeaders = [...this.$store.getters['type-map/headersFor'](this.schema, true)];
+      const paginationHeaders = this.$store.getters['type-map/headersFor'](this.schema, true);
 
-      if (paginationHeaders) {
-        if (this.canViewPods) {
-          paginationHeaders.splice(paginationHeaders.length - 1, 0, {
-            ...PODS,
-            breakpoint: COLUMN_BREAKPOINTS.DESKTOP,
-            sort:       false,
-            search:     false,
-            getValue:   (row: any) => row.podConsumedUsage
-          });
-        }
-
-        // Add Disk % column after RAM column (if metrics are available)
-        if (this.canViewNodeMetrics) {
-          const ramIndex = paginationHeaders.findIndex((h: any) => h.name === 'ram');
-          if (ramIndex !== -1) {
-            paginationHeaders.splice(ramIndex + 1, 0, {
-              name:       'disk',
-              labelKey:   'node.list.disk',
-              label:      'Disk',
-              value:      'diskUsagePercentage',
-              sort:       false, // Disable sort for pagination (Prometheus data not in K8s)
-              search:     false,
-              formatter:  'PercentageBar',
-              breakpoint: COLUMN_BREAKPOINTS.LAPTOP,
-              width:      120,
-              getValue:   (row: any) => {
-                const diskPercent = row.diskUsagePercentage;
-                return diskPercent !== null && diskPercent !== undefined ? diskPercent : null;
-              }
-            });
-          }
-        }
-
-        return paginationHeaders;
-      } else {
+      if (!paginationHeaders) {
         console.warn('Nodes list expects pagination headers but none found'); // eslint-disable-line no-console
 
         return [];
       }
+
+      return this.decorateHeaders(paginationHeaders, true);
     },
 
-    // Check if label filter is active
-    hasActiveFilter() {
-      return !!(this.selectedLabelKey && this.selectedLabelValue);
-    },
+    // ---- label filter -----------------------------------------------------
 
-    // All available label keys from all nodes
-    labelKeyOptions() {
+    labelKeyOptions(): string[] {
       const keys = new Set<string>();
-      
-      // Get all nodes to extract label keys
-      const allNodes = this.$store.getters[`cluster/all`](this.resource) || [];
-      
-      allNodes.forEach((node: NodeResource) => {
-        const labels = node.metadata?.labels || {};
-        Object.keys(labels).forEach(key => {
-          // Filter out kubernetes system labels for cleaner UX
-          if (!isSystemLabel(key)) {
-            keys.add(key);
-          }
-        });
-      });
 
-      return Array.from(keys).sort().map(key => ({
-        label: key,
-        value: key
+      this.nodeLabels.forEach((labels) => Object.keys(labels).forEach((key) => {
+        if (!isSystemLabel(key)) {
+          keys.add(key);
+        }
       }));
+
+      return [...keys].sort();
     },
 
-    // All available label values for selected key
-    labelValueOptions() {
+    labelValueOptions(): string[] {
       if (!this.selectedLabelKey) {
         return [];
       }
 
       const values = new Set<string>();
-      const allNodes = this.$store.getters[`cluster/all`](this.resource) || [];
-      
-      allNodes.forEach((node: NodeResource) => {
-        const labels = node.metadata?.labels || {};
+
+      this.nodeLabels.forEach((labels) => {
         const value = labels[this.selectedLabelKey];
+
         if (value !== undefined) {
           values.add(value);
         }
       });
 
-      return Array.from(values).sort().map(value => ({
-        label: value,
-        value: value
-      }));
+      return [...values].sort();
     },
 
-    // Filtered nodes based on label selection
-    filteredRows() {
-      if (!this.selectedLabelKey || !this.selectedLabelValue) {
-        return this.kubeNodes;
-      }
+    hasActiveFilter(): boolean {
+      return !!(this.selectedLabelKey && this.selectedLabelValue);
+    },
 
-      return this.kubeNodes.filter((node: NodeResource) => {
-        return matchesLabelFilter(node, this.selectedLabelKey, this.selectedLabelValue);
-      });
-    }
+    /** Changing it re-creates the table so the first page is fetched with the new filter */
+    filterKey(): string {
+      return this.hasActiveFilter ? `${ this.selectedLabelKey }=${ this.selectedLabelValue }` : 'all';
+    },
+
+    matchingNodeCount(): number {
+      return this.nodeLabels.filter((labels) => labels[this.selectedLabelKey] === this.selectedLabelValue).length;
+    },
+
+    diskForbidden(): boolean {
+      return diskMetricsState.status === 'forbidden';
+    },
+  },
+
+  watch: {
+    selectedLabelKey(neu: string) {
+      this.selectedLabelValue = '';
+      if (neu && this.labelValueOptions.length === 1) {
+        this.selectedLabelValue = this.labelValueOptions[0];
+      }
+    },
+
   },
 
   methods: {
-    async loadMetrics() {
-      if (!this.canViewNodeMetrics) {
-        return;
-      }
-
-      // WORKAROUND: Rancher v2.13.1 has metrics cache bug (stores metrics for 20+ days)
-      // Fetch fresh metrics directly from K8s API via model's initMetrics()
-      // This call is cached for 15s, so safe to call frequently without spamming API
-      if (this.kubeNodes.length > 0) {
-        const firstNode = this.kubeNodes[0];
-        if (firstNode && typeof firstNode.initMetrics === 'function') {
-          try {
-            // Load CPU/RAM metrics from metrics.k8s.io
-            await firstNode.initMetrics();
-            
-            // Load disk metrics from Prometheus (if available)
-            // This is optional and will gracefully fail if Prometheus is not configured
-            await this.loadDiskMetrics();
-            
-            // Success - all nodes now share fresh cached metrics
-            // No need to call store.dispatch, model getters will use fresh cache
-            this.$forceUpdate();
-            return;
-          } catch (error) {
-            console.warn('[NodeList] Failed to load fresh metrics, falling back to store:', error);
-            // Fall through to store fallback below
-          }
+    decorateHeaders(base: any[], paginated: boolean): any[] {
+      // Display fix: Rancher's CPU / RAM columns keep name, position, formatter and sortability, only the
+      // value becomes live (and the sort follows it). Paginated headers are not sortable in Rancher either.
+      // Note: SortableTable renders `col.value` (path or function) and ignores `getValue`.
+      const cpu = (row: any) => percentString(this.cpuPercent(row));
+      const ram = (row: any) => percentString(this.ramPercent(row));
+      const headers = base.map((h: any) => {
+        if (h.name === 'cpu') {
+          return {
+            ...h, ...(paginated ? {} : { sort: [SORT_KEY_CPU] }), value: cpu, getValue: cpu
+          };
         }
-      }
-
-      // Fallback: Load from Rancher store (only if direct API failed)
-      // This is stale data but better than nothing
-      if (this.canPaginate) {
-        if (!this.kubeNodes.length) {
-          return;
+        if (h.name === 'ram') {
+          return {
+            ...h, ...(paginated ? {} : { sort: [SORT_KEY_RAM] }), value: ram, getValue: ram
+          };
         }
 
-        const opt: ActionFindPageArgs = {
-          force:      true,
-          pagination: new FilterArgs({
-            filters: new PaginationParamFilter({
-              fields: this.kubeNodes.map((r: any) => new PaginationFilterField({
-                field: 'metadata.name',
-                value: r.id
-              }))
-            })
-          })
-        };
+        return h;
+      });
 
-        await this.$store.dispatch('cluster/findPage', {
-          type: METRIC.NODE,
-          opt
-        });
-      } else {
-        await this.$store.dispatch('cluster/findAll', {
-          type: METRIC.NODE,
-          opt:  { force: true }
+      const ramIndex = headers.findIndex((h: any) => h.name === 'ram');
+      const disk = (row: any) => percentString(this.diskPercent(row));
+
+      headers.splice(ramIndex >= 0 ? ramIndex + 1 : headers.length - 1, 0, {
+        name:       'disk',
+        labelKey:   'node.list.disk',
+        value:      disk,
+        formatter:  'PercentageBar',
+        breakpoint: COLUMN_BREAKPOINTS.LAPTOP,
+        width:      120,
+        sort:       paginated ? false : [SORT_KEY_DISK],
+        search:     false,
+        getValue:   disk,
+      });
+
+      // Rancher's own Pods column (running pods in the store / capacity), live via the websocket watch
+      if (this.canViewPods) {
+        headers.splice(headers.length - 1, 0, {
+          ...PODS,
+          breakpoint: COLUMN_BREAKPOINTS.DESKTOP,
+          ...(paginated ? { sort: false, search: false } : {}),
+          getValue:   (row: any) => row.podConsumedUsage,
         });
       }
 
-      this.$forceUpdate();
+      return headers;
     },
 
-    /**
-     * Load disk usage metrics from Prometheus for all nodes
-     * This is called as part of loadMetrics() and runs in parallel with CPU/RAM
-     * 
-     * Gracefully handles Prometheus not being available - no errors, just null values
-     */
-    async loadDiskMetrics() {
-      if (!this.kubeNodes || this.kubeNodes.length === 0) {
-        return;
+    /** Numeric sort keys for the live CPU / RAM / Disk values (client-side sort only) */
+    decorateRowsForSort(): void {
+      this.kubeNodes.forEach((row: any) => {
+        defineSortKey(row, SORT_KEY_CPU, (r) => sortablePercent(this.cpuPercent(r)));
+        defineSortKey(row, SORT_KEY_RAM, (r) => sortablePercent(this.ramPercent(r)));
+        defineSortKey(row, SORT_KEY_DISK, (r) => sortablePercent(this.diskPercent(r)));
+      });
+    },
+
+    /** Same formula as `kubectl top nodes` and the node detail page: usage / allocatable */
+    cpuPercent(row: any): number | undefined {
+      return percent(nodeUsage(row.id)?.cpu, toMillicores(row.status?.allocatable?.cpu));
+    },
+
+    ramPercent(row: any): number | undefined {
+      return percent(nodeUsage(row.id)?.memory, parseQuantity(row.status?.allocatable?.memory));
+    },
+
+    diskPercent(row: any): number | undefined {
+      return diskUsageByIp(row.internalIp);
+    },
+
+    // ---- label filter -----------------------------------------------------
+
+    async loadNodeLabels(): Promise<void> {
+      try {
+        const clusterId = this.$store.getters['clusterId'];
+        const res = await this.$store.dispatch('cluster/request', { url: `/k8s/clusters/${ clusterId }/v1/nodes?exclude=metadata.managedFields&exclude=spec&exclude=status` });
+
+        this.nodeLabels = (res?.data || []).map((node: any) => node.metadata?.labels || {});
+        this.labelsFetchedAt = Date.now();
+      } catch (err) {
+        console.warn('[NodeList] Failed to load node labels:', err); // eslint-disable-line no-console
+      }
+    },
+
+    refreshLabelsIfStale(): void {
+      if (Date.now() - this.labelsFetchedAt > LABELS_MAX_AGE_MS) {
+        this.loadNodeLabels();
+      }
+    },
+
+    clearLabelFilter(): void {
+      this.selectedLabelKey = '';
+      this.selectedLabelValue = '';
+    },
+
+    /** Server-side filter (paginated). Mutates the per-request copy of the pagination settings */
+    apiFilter(pagination: any): any {
+      if (this.hasActiveFilter) {
+        pagination.labelSelector = { matchLabels: { [this.selectedLabelKey]: this.selectedLabelValue } };
       }
 
-      try {
-        // Use first node to trigger the shared cache fetch
-        const firstNode = this.kubeNodes[0];
-        if (firstNode && typeof firstNode.getDiskUsage === 'function') {
-          // This fetches ALL nodes' disk metrics in one Prometheus query
-          // and caches the results globally
-          await firstNode.getDiskUsage();
-          
-          // Prometheus is available if we got here without error
-          if (this.prometheusAvailable !== true) {
-            this.prometheusAvailable = true;
-          }
-          
-          // Now populate each node's _diskUsageCache from the global cache
-          // This is done synchronously since the data is already cached
-          await Promise.all(
-            this.kubeNodes.map(async (node: any) => {
-              if (typeof node.getDiskUsage === 'function') {
-                try {
-                  const diskPercent = await node.getDiskUsage();
-                  // Set cache value that diskUsagePercentage getter will use
-                  node._diskUsageCache = diskPercent;
-                } catch (error) {
-                  // Silent fail - disk metrics are optional
-                  node._diskUsageCache = null;
-                }
-              }
-            })
-          );
-        }
-      } catch (error: any) {
-        // Check if error is due to insufficient RBAC permissions
-        if (error?.status === 403 || error?.response?.status === 403) {
-          this.prometheusAvailable = false;
-        }
-        // Silent fail - Prometheus might not be configured (expected behavior)
+      return pagination;
+    },
+
+    /** Client-side filter (not paginated, every node is already loaded) */
+    localFilter(rows: any[]): any[] {
+      if (!this.hasActiveFilter) {
+        return rows;
       }
+
+      return rows.filter((row: any) => row.metadata?.labels?.[this.selectedLabelKey] === this.selectedLabelValue);
+    },
+
+    onPrometheusSaved(): void {
+      resetDiskMetrics();
     },
 
     toggleLabels(row: any) {
@@ -381,7 +365,7 @@ export default defineComponent({
     },
 
     /**
-     * of type PagTableFetchSecondaryResources
+     * of type PagTableFetchSecondaryResources (server-side pagination disabled)
      */
     async fetchSecondaryResources({ canPaginate }: PagTableFetchSecondaryResourcesOpts): PagTableFetchSecondaryResourcesReturns {
       if (canPaginate) {
@@ -402,7 +386,7 @@ export default defineComponent({
       }
 
       if (this.canViewPods) {
-        // No need to block on this
+        // No need to block on this (live via websocket watch, cleared in beforeUnmount)
         this.$store.dispatch(`cluster/findAll`, { type: POD });
       }
 
@@ -410,24 +394,17 @@ export default defineComponent({
     },
 
     /**
-     * Nodes columns need other resources in order to show data in some columns
-     *
-     * In the paginated world we want to restrict the fetch of those resources to only the one's we need
-     *
-     * So when we have a page.... use those entries as filters when fetching the other resources
+     * Fetch only what the current page needs (server-side pagination enabled)
      *
      * of type PagTableFetchPageSecondaryResources
      */
-    async fetchPageSecondaryResources({ canPaginate, force, page }: PagTableFetchPageSecondaryResourcesOpts) {
+    async fetchPageSecondaryResources({ force, page }: PagTableFetchPageSecondaryResourcesOpts) {
       if (!page?.length) {
         return;
       }
 
       if (this.canViewMgmtNodes && this.canViewNormanNodes) {
-        if (this.canViewNormanNodes) {
-          // Ideally we only fetch the nodes we need....
-          this.$store.dispatch(`rancher/findAll`, { type: NORMAN.NODE });
-        }
+        this.$store.dispatch(`rancher/findAll`, { type: NORMAN.NODE });
 
         // We only fetch mgmt node to get norman node. We only fetch node to get node actions
         // See https://github.com/rancher/dashboard/issues/10743
@@ -474,7 +451,7 @@ export default defineComponent({
       }
 
       if (this.canViewPods) {
-        // Note - fetching pods for current page could be a LOT still (probably max of 3k - 300 pods per node x 100 nodes in a page)
+        // Pods of the nodes on this page only. Rancher re-fetches them when pods change (resource.changes watch)
         const opt: ActionFindPageArgs = {
           force,
           pagination: new FilterArgs({
@@ -489,92 +466,38 @@ export default defineComponent({
 
         this.$store.dispatch(`cluster/findPage`, { type: POD, opt });
       }
-
-      // Fetch metrics given the current page
-      this.loadMetrics();
     },
-
-    clearLabelFilter() {
-      this.selectedLabelKey = '';
-      this.selectedLabelValue = '';
-    },
-
-    async ensureAllNodesLoaded() {
-      // When filter becomes active, ensure all nodes are loaded
-      // This is necessary because pagination only loads current page
-      if (this.canPaginate && this.hasActiveFilter) {
-        try {
-          await this.$store.dispatch('cluster/findAll', { 
-            type: this.resource,
-            opt: { force: true }
-          });
-        } catch (err) {
-          console.error('[Node Filter] Failed to load all nodes:', err);
-        }
-      }
-    }
-  },
-
-  watch: {
-    // Watch for label key change and auto-fill value if only one option
-    selectedLabelKey(newKey, oldKey) {
-      // Only proceed if key actually changed
-      if (newKey !== oldKey) {
-        if (newKey) {
-          // Reset value when key changes
-          this.selectedLabelValue = '';
-          
-          // Auto-fill if only one value available
-          // Use setTimeout to ensure labelValueOptions is computed after selectedLabelValue is reset
-          setTimeout(() => {
-            if (this.labelValueOptions.length === 1) {
-              this.selectedLabelValue = this.labelValueOptions[0].value;
-            }
-          }, 0);
-        } else {
-          // Clear value when key is cleared
-          this.selectedLabelValue = '';
-        }
-      }
-    },
-    
-    // Watch for filter activation and load all nodes
-    hasActiveFilter: {
-      handler(newVal) {
-        if (newVal) {
-          this.ensureAllNodesLoaded();
-        }
-      },
-      immediate: false
-    }
   },
 });
 </script>
 
 <template>
   <div>
-    <!-- Custom Label Filter Section with Prometheus Settings -->
     <div class="label-filter-section mb-20">
       <div class="filter-row">
-        <!-- Label Key Dropdown -->
         <div class="label-key-select">
           <label class="text-label">{{ t('node.list.labelFilter.labelKey') }}</label>
           <select
             v-model="selectedLabelKey"
             class="form-control"
+            @focus="refreshLabelsIfStale"
           >
-            <option value="" disabled>{{ t('node.list.labelFilter.selectLabelKey') }}</option>
             <option
-              v-for="option in labelKeyOptions"
-              :key="option.value"
-              :value="option.value"
+              value=""
+              disabled
             >
-              {{ option.label }}
+              {{ t('node.list.labelFilter.selectLabelKey') }}
+            </option>
+            <option
+              v-for="key in labelKeyOptions"
+              :key="key"
+              :value="key"
+            >
+              {{ key }}
             </option>
           </select>
         </div>
-        
-        <!-- Label Value Dropdown -->
+
         <div class="label-value-select">
           <label class="text-label">{{ t('node.list.labelFilter.labelValue') }}</label>
           <select
@@ -582,17 +505,22 @@ export default defineComponent({
             :disabled="!selectedLabelKey"
             class="form-control"
           >
-            <option value="" disabled>{{ t('node.list.labelFilter.selectLabelValue') }}</option>
             <option
-              v-for="option in labelValueOptions"
-              :key="option.value"
-              :value="option.value"
+              value=""
+              disabled
             >
-              {{ option.label }}
+              {{ t('node.list.labelFilter.selectLabelValue') }}
+            </option>
+            <option
+              v-for="value in labelValueOptions"
+              :key="value"
+              :value="value"
+            >
+              {{ value }}
             </option>
           </select>
         </div>
-        
+
         <button
           v-if="selectedLabelKey || selectedLabelValue"
           class="btn role-secondary clear-filter-btn"
@@ -600,32 +528,27 @@ export default defineComponent({
         >
           {{ t('node.list.labelFilter.clear') }}
         </button>
-        
-        <!-- Prometheus Settings Button -->
-        <PrometheusSettings 
-          v-if="canViewNodeMetrics"
-          @saved="loadMetrics"
-        />
+
+        <PrometheusSettings @saved="onPrometheusSaved" />
       </div>
-      
+
       <div
-        v-if="selectedLabelKey && selectedLabelValue"
+        v-if="hasActiveFilter"
         class="filter-info"
       >
         <i class="icon icon-info" />
         <span>
-          {{ t('node.list.labelFilter.filteringBy', { 
-            key: selectedLabelKey, 
+          {{ t('node.list.labelFilter.filteringBy', {
+            key: selectedLabelKey,
             value: selectedLabelValue,
-            count: filteredRows.length 
+            count: matchingNodeCount
           }) }}
         </span>
       </div>
     </div>
 
-    <!-- Warning banner for insufficient Prometheus permissions -->
     <Banner
-      v-if="prometheusAvailable === false && canViewNodeMetrics"
+      v-if="diskForbidden"
       color="warning"
       class="mb-20"
     >
@@ -635,8 +558,14 @@ export default defineComponent({
       </div>
     </Banner>
 
+    <Banner
+      v-if="hasWindowsNodes"
+      color="info"
+      :label="t('cluster.custom.registrationCommand.windowsWarning')"
+    />
+
     <PaginatedResourceTable
-      v-if="!hasActiveFilter"
+      :key="filterKey"
       v-bind="$attrs"
       :schema="schema"
       :headers="headers"
@@ -644,6 +573,9 @@ export default defineComponent({
       :sub-rows="true"
       :fetchSecondaryResources="fetchSecondaryResources"
       :fetchPageSecondaryResources="fetchPageSecondaryResources"
+      :api-filter="apiFilter"
+      :local-filter="localFilter"
+      :sort-generation-fn="sortGenerationFn"
       :use-query-params-for-simple-filtering="useQueryParamsForSimpleFiltering"
       data-testid="cluster-node-list"
     >
@@ -709,96 +641,15 @@ export default defineComponent({
         </tr>
       </template>
     </PaginatedResourceTable>
-
-    <!-- Use ResourceTable for filtered results (client-side) -->
-    <ResourceTable
-      v-else
-      v-bind="$attrs"
-      :schema="schema"
-      :rows="filteredRows"
-      :headers="headers"
-      :sub-rows="true"
-      data-testid="cluster-node-list-filtered"
-    >
-      <template #sub-row="{fullColspan, row, onRowMouseEnter, onRowMouseLeave}">
-        <tr
-          class="taints sub-row"
-          :class="{'empty-taints': ! row.displayTaintsAndLabels}"
-          @mouseenter="onRowMouseEnter"
-          @mouseleave="onRowMouseLeave"
-        >
-          <template v-if="row.displayTaintsAndLabels">
-            <td>&nbsp;</td>
-            <td>&nbsp;</td>
-            <td :colspan="fullColspan-2">
-              <span v-if="row.spec.taints && row.spec.taints.length">
-                {{ t('node.list.nodeTaint') }}:
-                <Tag
-                  v-for="(taint, i) in row.spec.taints"
-                  :key="i"
-                  class="mr-5 mt-2"
-                >
-                  {{ taint.key }}={{ taint.value }}:{{ taint.effect }}
-                </Tag>
-              </span>
-              <span
-                v-if="!!row.customLabelCount"
-                class="mt-5"
-              > {{ t('node.list.nodeLabels') }}:
-                <span
-                  v-for="(label, i) in row.customLabels"
-                  :key="i"
-                  class="mt-5 labels"
-                >
-                  <Tag
-                    v-if="i < 7"
-                    class="mr-2 label"
-                  >
-                    {{ label }}
-                  </Tag>
-                  <Tag
-                    v-else-if="i > 6 && row.displayLabels"
-                    class="mr-2 label"
-                  >
-                    {{ label }}
-                  </Tag>
-                </span>
-                <a
-                  v-if="row.customLabelCount > 7"
-                  href="#"
-                  @click.prevent="toggleLabels(row)"
-                >
-                  {{ t(`node.list.${row.displayLabels? 'hideLabels' : 'showLabels'}`) }}
-                </a>
-              </span>
-            </td>
-          </template>
-          <td
-            v-else
-            :colspan="fullColspan"
-          >
-&nbsp;
-          </td>
-        </tr>
-      </template>
-    </ResourceTable>
   </div>
 </template>
 
 <style lang='scss' scoped>
-.node-list-header {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  padding: 10px 0;
-}
-
 .label-filter-section {
   background: var(--box-bg);
   border: 1px solid var(--border);
   border-radius: var(--border-radius);
   padding: 15px;
-  margin-bottom: 20px;
 
   .filter-row {
     display: flex;
@@ -810,7 +661,7 @@ export default defineComponent({
       flex: 1;
       min-width: 200px;
       max-width: 300px;
-      
+
       .text-label {
         display: block;
         margin-bottom: 5px;
@@ -818,7 +669,7 @@ export default defineComponent({
         font-weight: 500;
         color: var(--input-label);
       }
-      
+
       .form-control {
         width: 100%;
         height: 40px;
@@ -828,7 +679,7 @@ export default defineComponent({
         background: var(--input-bg);
         color: var(--input-text);
         font-size: 14px;
-        
+
         &:disabled {
           opacity: 0.5;
           cursor: not-allowed;
@@ -839,10 +690,6 @@ export default defineComponent({
           outline: none;
           border-color: var(--primary);
         }
-        
-        option {
-          padding: 8px;
-        }
       }
     }
 
@@ -851,8 +698,7 @@ export default defineComponent({
       padding: 0 15px;
       white-space: nowrap;
     }
-    
-    // Prometheus Settings button in filter row
+
     .prometheus-settings {
       margin-left: auto;
     }
@@ -865,10 +711,6 @@ export default defineComponent({
     gap: 8px;
     color: var(--primary);
     font-size: 14px;
-
-    .icon-info {
-      font-size: 16px;
-    }
   }
 }
 

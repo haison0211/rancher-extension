@@ -1,91 +1,89 @@
 import { importTypes } from '@rancher/auto-import';
-import { IPlugin } from '@shell/core/types';
+import {
+  IPlugin, ActionLocation, PanelLocation, TableColumnLocation
+} from '@shell/core/types';
+import { isNodeReady } from './utils/node-state';
 
 /**
- * Rancher Node & Pod Extension v6.0.7
+ * Rancher Node & Pod Extension
+ *
+ * Rancher waits for this entry chunk before it renders anything (on every page load / F5),
+ * so it must stay tiny: only extension-point registrations live here and everything else is
+ * lazy-imported.
+ *
+ * Do not add a `models/` folder. Auto-import loads models eagerly (`require`), which pulls the
+ * whole @shell model hierarchy (lodash, highlight.js, diff, ...) into this chunk and replaces
+ * Rancher's own pod/node/service models with an older bundled copy.
+ *
+ * Do not load pods into the `cluster` store from background code (e.g. a cluster-wide
+ * `findAll` pod). Rancher's workload detail page then returns every pod in the store as the
+ * workload's pods (`matchingLabelSelector` checks `haveSelector` before `haveAll`).
  */
 
-// Background cleanup job for old shell pods
-let cleanupInterval: NodeJS.Timeout | null = null;
-
-async function cleanupOldShellPods(): Promise<void> {
-  try {
-    const store = (window as any).$nuxt?.$store;
-    if (!store) {
-      console.warn('[NodeShell Cleanup] Store not available yet');
-      return;
-    }
-    
-    const POD = 'pod';
-    const namespace = 'node-shell';
-    
-    const allPods = await store.dispatch('cluster/findAll', { 
-      type: POD,
-      opt: { force: true } 
-    });
-    
-    const shellPods = allPods.filter((pod: any) => 
-      pod.metadata?.namespace === namespace &&
-      pod.metadata?.labels?.app === 'node-shell'
-    );
-    
-    const now = Date.now();
-    const maxAge = 30 * 60 * 1000;
-    let deletedCount = 0;
-    
-    for (const pod of shellPods) {
-      const createdAt = pod.metadata?.annotations?.['rancher-node-filter.io/created-at'];
-      const age = createdAt ? now - new Date(createdAt).getTime() : 0;
-      
-      const isCompleted = pod.status?.phase === 'Succeeded' || pod.status?.phase === 'Failed';
-      const isTooOld = createdAt && age > maxAge;
-      
-      if (isCompleted || isTooOld) {
-        try {
-          await pod.remove();
-          deletedCount++;
-          const reason = isCompleted ? `completed (${pod.status?.phase})` : `too old (age: ${Math.round(age / 60000)}m)`;
-          console.log(`[NodeShell Cleanup] Deleted pod: ${pod.metadata.name} - reason: ${reason}`);
-        } catch (error) {
-          console.error('[NodeShell Cleanup] Failed to delete pod:', pod.metadata.name, error);
-        }
-      }
-    }
-    
-    if (deletedCount > 0) {
-      console.log(`[NodeShell Cleanup] Cleanup completed: ${deletedCount} pod(s) deleted`);
-    }
-  } catch (error) {
-    console.error('[NodeShell Cleanup] Cleanup job failed:', error);
-  }
+function openProxyModal(resource: any, resourceType: 'pod' | 'service'): void {
+  resource.$dispatch('promptModal', {
+    component:      'NodeFilterProxyModal',
+    modalWidth:     '1100px',
+    componentProps: {
+      resource,
+      resourceType,
+      clusterId: resource.$rootGetters['clusterId'],
+    },
+  });
 }
 
-function startCleanupJob(): void {
-  if (cleanupInterval) {
-    return;
-  }
-  
-  console.log('[NodeShell] Background cleanup job started (runs every 5 minutes)');
-  
-  setTimeout(() => {
-    cleanupOldShellPods();
-  }, 30000);
-  
-  cleanupInterval = setInterval(() => {
-    cleanupOldShellPods();
-  }, 5 * 60 * 1000);
+/**
+ * Live CPU / RAM columns for the native Pod list.
+ *
+ * The same definition is passed as the server-side pagination column: metrics are not part of the
+ * pod object, so the value is rendered by the formatter and the column is neither sortable nor
+ * searchable (the Top pods panel covers "which pods are heavy").
+ */
+function podMetricColumn(kind: 'cpu' | 'memory') {
+  return {
+    name:          `node-filter-${ kind }`,
+    label:         kind === 'cpu' ? 'CPU' : 'RAM',
+    value:         'metadata.name',
+    formatter:     'NodeFilterPodMetric',
+    formatterOpts: { kind },
+    sort:          false as const,
+    search:        false as const,
+    width:         110,
+    align:         'right',
+  };
 }
 
 export default function(plugin: IPlugin): void {
   importTypes(plugin);
 
-  plugin.register('list', 'node', () => import('./list/node.vue'));
-  plugin.register('list', 'pod', () => import('./list/pod.vue'));
-  plugin.register('list', 'service', () => import('./list/service.vue'));
-  plugin.register('detail', 'node', () => import('./detail/node.vue'));
-  
-  startCleanupJob();
+  // Pod list: keep Rancher's own (server-side paginated) list, add live usage on top of it
+  plugin.addTableColumn(TableColumnLocation.RESOURCE, { resource: ['pod'] }, podMetricColumn('cpu'), podMetricColumn('cpu'));
+  plugin.addTableColumn(TableColumnLocation.RESOURCE, { resource: ['pod'] }, podMetricColumn('memory'), podMetricColumn('memory'));
+  plugin.addPanel(PanelLocation.RESOURCE_LIST, { resource: ['pod'] }, { component: () => import(/* webpackChunkName: "top-pods" */ './components/TopPodsPanel.vue') });
 
-  // NOTE: HTTP Proxy now uses inline modal instead of routes
-  // No need to register routes - modal opens directly in Pod/Service list
+  plugin.addAction(ActionLocation.TABLE, { resource: ['pod'] }, {
+    label:    'Proxy HTTP',
+    icon:     'icon-globe',
+    multiple: false,
+    enabled:  (pod: any) => pod?.status?.phase === 'Running' && !!pod?.status?.podIP,
+    invoke:   (opts: any, resources: any[]) => openProxyModal(resources[0], 'pod'),
+  });
+
+  plugin.addAction(ActionLocation.TABLE, { resource: ['service'] }, {
+    label:    'Proxy HTTP',
+    icon:     'icon-globe',
+    multiple: false,
+    enabled:  (service: any) => service?.spec?.type !== 'ExternalName' && !!service?.spec?.ports?.length,
+    invoke:   (opts: any, resources: any[]) => openProxyModal(resources[0], 'service'),
+  });
+
+  plugin.addAction(ActionLocation.TABLE, { resource: ['node'] }, {
+    label:    'Shell',
+    icon:     'icon-terminal',
+    multiple: false,
+    enabled:  isNodeReady,
+    invoke:   (opts: any, resources: any[]) => {
+      import(/* webpackChunkName: "node-shell" */ './utils/node-shell').then(({ openNodeShell }) => openNodeShell(resources[0]));
+    },
+  });
 }

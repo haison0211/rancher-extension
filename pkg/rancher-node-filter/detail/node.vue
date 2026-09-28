@@ -1,4 +1,15 @@
 <script>
+/**
+ * Node detail: verbatim copy of Rancher's shell/detail/node.vue (Rancher 2.13.1; 2.14.3 only drops one spacer) plus
+ * - Display fix on Rancher's CPU / RAM gauges (see FEATURES.md "Native display fixes"): live usage / allocatable
+ *   from metrics.k8s.io, the same numbers as the node list and `kubectl top nodes`
+ * - CPU / RAM columns in the Pods tab (metrics.k8s.io, sortable by the real numbers)
+ * - Shell button
+ * - Pods are dropped from the store when leaving the page (like Rancher's node list does), so they
+ *   can never show up in another page's pod list (e.g. a Deployment)
+ *
+ * The pods themselves are fetched exactly like Rancher does, so the Pods tab and gauge stay live.
+ */
 import ConsumptionGauge from '@shell/components/ConsumptionGauge';
 import Alert from '@shell/components/Alert';
 import ResourceTable from '@shell/components/ResourceTable';
@@ -11,18 +22,53 @@ import {
   VALUE
 } from '@shell/config/table-headers';
 import ResourceTabs from '@shell/components/form/ResourceTabs';
-import { METRIC, POD } from '@shell/config/types';
+import { POD } from '@shell/config/types';
 import createEditView from '@shell/mixins/create-edit-view';
 import { formatSi, exponentNeeded, UNITS } from '@shell/utils/units';
 import DashboardMetrics from '@shell/components/DashboardMetrics';
 import { mapGetters } from 'vuex';
 import { allDashboardsExist } from '@shell/utils/grafana';
 import Loading from '@shell/components/Loading';
-import metricPoller from '@shell/mixins/metric-poller';
 import { FilterArgs, PaginationParamFilter } from '@shell/types/store/pagination.types';
+
+import {
+  subscribeNodeMetrics, subscribePodMetrics, nodeUsage, nodeMetricsState, podUsage, podMetricsState
+} from '../services/metrics-store';
+import { parseQuantity, toMillicores } from '../utils/quantity';
+import { defineSortKey, sortGenerationWith } from '../utils/sort-keys';
+import { isNodeReady } from '../utils/node-state';
+import { isPodTerminated } from '../utils/pod-state';
 
 const NODE_METRICS_DETAIL_URL = '/api/v1/namespaces/cattle-monitoring-system/services/http:rancher-monitoring-grafana:80/proxy/d/rancher-node-detail-1/rancher-node-detail?orgId=1';
 const NODE_METRICS_SUMMARY_URL = '/api/v1/namespaces/cattle-monitoring-system/services/http:rancher-monitoring-grafana:80/proxy/d/rancher-node-1/rancher-node?orgId=1';
+
+const SORT_KEY_POD_CPU = 'nodeFilterCpu';
+const SORT_KEY_POD_MEMORY = 'nodeFilterMemory';
+
+/** Same number the cell shows: live usage, 0 for Completed / Failed pods, -1 (sorts last) when unknown */
+function podSortValue(pod, kind) {
+  const usage = podUsage(pod.metadata?.namespace, pod.metadata?.name);
+
+  if (usage) {
+    return usage[kind];
+  }
+
+  return isPodTerminated(pod) ? 0 : -1;
+}
+
+function podMetricHeader(kind) {
+  return {
+    name:          `node-filter-${ kind }`,
+    label:         kind === 'cpu' ? 'CPU' : 'RAM',
+    value:         'metadata.name',
+    formatter:     'NodeFilterPodMetric',
+    formatterOpts: { kind },
+    sort:          [kind === 'cpu' ? SORT_KEY_POD_CPU : SORT_KEY_POD_MEMORY],
+    search:        false,
+    width:         110,
+    align:         'right',
+  };
+}
 
 export default {
   name: 'DetailNode',
@@ -39,7 +85,7 @@ export default {
     ResourceTable,
   },
 
-  mixins: [createEditView, metricPoller],
+  mixins: [createEditView],
 
   props: {
     value: {
@@ -71,22 +117,15 @@ export default {
     }
 
     this.showMetrics = await allDashboardsExist(this.$store, this.currentCluster.id, [NODE_METRICS_DETAIL_URL, NODE_METRICS_SUMMARY_URL]);
-    
-    // Load pod metrics
-    await this.loadPodMetrics();
-    
-    // Start polling
-    this.startMetricsPolling();
-  },
-
-  beforeUnmount() {
-    // CRITICAL: Stop polling when component is destroyed
-    // This prevents polling from continuing when navigating away from Node Detail
-    this.stopMetricsPolling();
   },
 
   data() {
     const podSchema = this.$store.getters['cluster/schemaFor'](POD);
+    const podTableHeaders = [...(this.$store.getters['type-map/headersFor'](podSchema) || [])];
+    const ageIndex = podTableHeaders.findIndex((h) => h.name === 'age');
+
+    // CPU / RAM before Age
+    podTableHeaders.splice(ageIndex >= 0 ? ageIndex : podTableHeaders.length, 0, podMetricHeader('cpu'), podMetricHeader('memory'));
 
     return {
       metrics:          { cpu: 0, memory: 0 },
@@ -112,68 +151,42 @@ export default {
         EFFECT
       ],
       podSchema,
-      podTableHeaders: [], // Will be computed with metrics headers
+      podTableHeaders,
       NODE_METRICS_DETAIL_URL,
       NODE_METRICS_SUMMARY_URL,
       showMetrics:     false,
       filterByApi:     undefined,
-      // Metrics state
-      metricsMap: new Map(),
-      metricsLoading: false,
-      metricsError: null,
-      refreshInterval: null,
-      lastFetchTime: 0, // Track last fetch to prevent duplicate requests
+
+      releaseNodeMetrics: null,
+      releasePodMetrics:  null,
+      // Adds numeric sort keys to the pod rows and re-sorts when pods or pod metrics change
+      podSortGenerationFn: sortGenerationWith(
+        () => this.decoratePodsForSort(),
+        () => this.$store.getters['cluster/currentGeneration']?.(POD) || 0,
+        () => podMetricsState.fetchedAt
+      ),
     };
+  },
+
+  mounted() {
+    this.releaseNodeMetrics = subscribeNodeMetrics(this.$store, this.$store.getters['clusterId']);
+  },
+
+  beforeUnmount() {
+    this.releaseNodeMetrics?.();
+    this.releasePodMetrics?.();
+    this.releaseNodeMetrics = null;
+    this.releasePodMetrics = null;
+
+    // Rancher's node list does the same when it is left. Without it the pods loaded here stay in the store
+    // and a Deployment detail page opened later (without SQL cache) can list them as its own pods.
+    if (this.podSchema) {
+      this.$store.dispatch('cluster/forgetType', POD);
+    }
   },
 
   computed: {
     ...mapGetters(['currentCluster']),
-    
-    // Pod table headers with CPU/RAM metrics columns
-    podTableHeadersWithMetrics() {
-      if (!this.podSchema) return [];
-      
-      const baseHeaders = this.$store.getters['type-map/headersFor'](this.podSchema) || [];
-      
-      // Find position: after Node, before Age
-      const nodeIndex = baseHeaders.findIndex(h => h.name === 'node');
-      const ageIndex = baseHeaders.findIndex(h => h.name === 'age');
-      
-      let insertIndex = baseHeaders.length;
-      if (ageIndex >= 0) {
-        insertIndex = ageIndex;
-      } else if (nodeIndex >= 0) {
-        insertIndex = nodeIndex + 1;
-      }
-      
-      const metricsHeaders = [
-        {
-          name: 'cpu',
-          label: 'CPU',
-          value: 'cpu',
-          sort: ['cpu'],
-          width: 120
-        },
-        {
-          name: 'memory',
-          label: 'RAM',
-          value: 'memory',
-          sort: ['memory'],
-          width: 120
-        }
-      ];
-      
-      return [
-        ...baseHeaders.slice(0, insertIndex),
-        ...metricsHeaders,
-        ...baseHeaders.slice(insertIndex)
-      ];
-    },
-    
-    clusterId() {
-      return this.$route.params.cluster || 'local';
-    },
-    
     memoryUnits() {
       const exponent = exponentNeeded(this.value.ramReserved, 1024);
 
@@ -220,7 +233,62 @@ export default {
 
     graphVars() {
       return { instance: `${ this.value.internalIp }:9796` };
-    }
+    },
+
+    // ---- live node usage (display fix) ----------------------------------------
+
+    liveUsage() {
+      return nodeUsage(this.value.id);
+    },
+
+    /** Same unit as Rancher's gauge (cores): allocatable */
+    cpuAllocatableCores() {
+      return toMillicores(this.value.status?.allocatable?.cpu) / 1000;
+    },
+
+    /** Rounded up to the millicore like `kubectl top`, so it matches the pod columns to 0.001 vCPU */
+    cpuUsedCores() {
+      return this.liveUsage ? Math.ceil(this.liveUsage.cpu - 1e-6) / 1000 : 0;
+    },
+
+    /** Same unit as Rancher's gauge (bytes): allocatable */
+    memoryAllocatableBytes() {
+      return parseQuantity(this.value.status?.allocatable?.memory);
+    },
+
+    memoryUsedBytes() {
+      return this.liveUsage ? this.liveUsage.memory : 0;
+    },
+
+    metricsError() {
+      return nodeMetricsState.error;
+    },
+
+    // ---- pods tab ----------------------------------------------------------------
+
+    podNamespaces() {
+      return [...new Set((this.value.pods || []).map((pod) => pod.metadata?.namespace).filter(Boolean))].sort();
+    },
+
+    canShell() {
+      return isNodeReady(this.value);
+    },
+  },
+
+  watch: {
+    // Keep metrics for every namespace that has a pod on this node (needed to sort all rows, not only visible ones)
+    podNamespaces: {
+      handler(neu, old) {
+        if (old && neu.join(',') === old.join(',')) {
+          return;
+        }
+        const previous = this.releasePodMetrics;
+
+        this.releasePodMetrics = neu.length ? subscribePodMetrics(this.$store, this.$store.getters['clusterId'], neu) : null;
+        previous?.();
+      },
+      immediate: true,
+    },
   },
 
   methods: {
@@ -233,83 +301,25 @@ export default {
       return formatSi(value, formatOptions);
     },
 
+    /** Gauge numbers in vCPU with 3 decimals (0.001 vCPU = 1 millicore), same unit as the pod columns */
+    vcpuFormatter(value) {
+      return (value || 0).toFixed(3);
+    },
+
     mapToStatus(isOk) {
       return isOk ? 'success' : 'error';
     },
 
-    async loadMetrics() {
-      const schema = this.$store.getters['cluster/schemaFor'](METRIC.NODE);
+    decoratePodsForSort() {
+      (this.value.pods || []).forEach((pod) => {
+        defineSortKey(pod, SORT_KEY_POD_CPU, (p) => podSortValue(p, 'cpu'));
+        defineSortKey(pod, SORT_KEY_POD_MEMORY, (p) => podSortValue(p, 'memory'));
+      });
+    },
 
-      if (schema) {
-        await this.$store.dispatch('cluster/find', {
-          type: METRIC.NODE,
-          id:   this.value.id,
-          opt:  { force: true }
-        });
-
-        this.$forceUpdate();
-      }
+    openShell() {
+      import(/* webpackChunkName: "node-shell" */ '../utils/node-shell').then(({ openNodeShell }) => openNodeShell(this.value));
     },
-    
-    // Pod metrics methods
-    async loadPodMetrics() {
-      // Prevent duplicate requests within 2 seconds
-      const now = Date.now();
-      if (this.metricsLoading || (now - this.lastFetchTime < 2000)) {
-        return;
-      }
-      
-      try {
-        this.metricsLoading = true;
-        this.metricsError = null;
-        this.lastFetchTime = now;
-        
-        const { fetchPodMetrics } = await import('../utils/metrics');
-        const metrics = await fetchPodMetrics(this.$store.$axios, this.clusterId);
-        
-        this.metricsMap = metrics;
-      } catch (error) {
-        console.error('[NodeDetail] Error loading pod metrics:', error);
-        this.metricsError = error.message || 'Failed to load metrics';
-      } finally {
-        this.metricsLoading = false;
-      }
-    },
-    
-    startMetricsPolling() {
-      if (this.refreshInterval) {
-        clearInterval(this.refreshInterval);
-      }
-      
-      // Poll every 30s (reduced from 10s to minimize API spam)
-      // Pods metrics don't change as frequently as we poll
-      this.refreshInterval = setInterval(() => {
-        this.loadPodMetrics();
-      }, 30000); // 30s interval (was 10000)
-    },
-    
-    stopMetricsPolling() {
-      if (this.refreshInterval) {
-        clearInterval(this.refreshInterval);
-        this.refreshInterval = null;
-      }
-    },
-    
-    getMetricsForPod(pod) {
-      const key = `${pod.metadata?.namespace}/${pod.metadata?.name}`;
-      const metrics = this.metricsMap.get(key);
-      
-      return metrics || { 
-        cpu: 0, 
-        memory: 0, 
-        cpuDisplay: '0.00 vCPU', 
-        memoryDisplay: '0 MiB' 
-      };
-    }
-  },
-  
-  beforeDestroy() {
-    this.stopMetricsPolling();
   }
 };
 </script>
@@ -342,19 +352,61 @@ export default {
         :message="t('node.detail.glance.kubelet')"
       />
     </div>
+    <div class="node-filter-actions">
+      <button
+        class="btn btn-sm role-secondary"
+        :disabled="!canShell"
+        :title="canShell ? 'Open a root shell on this node' : 'Node is not Ready'"
+        @click="openShell"
+      >
+        <i class="icon icon-terminal" /> Shell
+      </button>
+    </div>
     <div class="mt-20 resources">
       <ConsumptionGauge
+        v-if="liveUsage"
         :resource-name="t('node.detail.glance.consumptionGauge.cpu')"
-        :capacity="value.cpuCapacity"
-        :used="value.cpuUsage"
+        :capacity="cpuAllocatableCores"
+        :used="cpuUsedCores"
+        units="vCPU"
+        :number-formatter="vcpuFormatter"
       />
+      <div
+        v-else
+        class="gauge-pending"
+      >
+        <h3>{{ t('node.detail.glance.consumptionGauge.cpu') }}</h3>
+        <span
+          v-if="metricsError"
+          class="text-error"
+        >metrics-server: {{ metricsError }}</span>
+        <i
+          v-else
+          class="icon icon-spinner icon-spin"
+        />
+      </div>
       <ConsumptionGauge
+        v-if="liveUsage"
         :resource-name="t('node.detail.glance.consumptionGauge.memory')"
-        :capacity="value.ramReserved"
-        :used="value.ramUsage"
+        :capacity="memoryAllocatableBytes"
+        :used="memoryUsedBytes"
         :units="memoryUnits"
         :number-formatter="memoryFormatter"
       />
+      <div
+        v-else
+        class="gauge-pending"
+      >
+        <h3>{{ t('node.detail.glance.consumptionGauge.memory') }}</h3>
+        <span
+          v-if="metricsError"
+          class="text-error"
+        >metrics-server: {{ metricsError }}</span>
+        <i
+          v-else
+          class="icon icon-spinner icon-spin"
+        />
+      </div>
       <ConsumptionGauge
         :resource-name="t('node.detail.glance.consumptionGauge.pods')"
         :capacity="value.podCapacity"
@@ -375,38 +427,13 @@ export default {
       >
         <ResourceTable
           key-field="_key"
-          :headers="podTableHeadersWithMetrics"
+          :headers="podTableHeaders"
           :rows="value.pods"
           :row-actions="false"
           :table-actions="false"
           :search="false"
-        >
-          <!-- Custom cell formatters for CPU -->
-          <template #cell:cpu="{ row }">
-            <span v-if="metricsLoading && metricsMap.size === 0" class="text-muted">
-              <i class="icon icon-spinner icon-spin" />
-            </span>
-            <span v-else-if="metricsError" class="text-error" :title="metricsError">
-              Error
-            </span>
-            <span v-else :title="`${getMetricsForPod(row).cpu} millicores`">
-              {{ getMetricsForPod(row).cpuDisplay }}
-            </span>
-          </template>
-
-          <!-- Custom cell formatters for RAM -->
-          <template #cell:memory="{ row }">
-            <span v-if="metricsLoading && metricsMap.size === 0" class="text-muted">
-              <i class="icon icon-spinner icon-spin" />
-            </span>
-            <span v-else-if="metricsError" class="text-error" :title="metricsError">
-              Error
-            </span>
-            <span v-else :title="`${getMetricsForPod(row).memory} MiB`">
-              {{ getMetricsForPod(row).memoryDisplay }}
-            </span>
-          </template>
-        </ResourceTable>
+          :sort-generation-fn="podSortGenerationFn"
+        />
       </Tab>
       <Tab
         v-if="showMetrics"
@@ -482,21 +509,15 @@ export default {
   }
 }
 
-.text-muted {
-  color: var(--muted);
+.node-filter-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
 }
 
-.text-error {
-  color: var(--error);
-  cursor: help;
-}
-
-.icon-spin {
-  animation: spin 1s linear infinite;
-}
-
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+.gauge-pending {
+  h3 {
+    margin-bottom: 10px;
+  }
 }
 </style>

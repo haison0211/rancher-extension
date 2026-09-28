@@ -1,329 +1,197 @@
 /**
- * Node Shell Utilities
- * 
- * Core logic for creating, managing, and cleaning up node shell pods
- * Implements Lens-compatible behavior with enhanced error handling
+ * Shell into Node (Lens-equivalent)
+ *
+ * Creates a privileged nsenter pod on the target node and opens Rancher's ContainerShell on it.
+ *
+ * Every API call goes through `cluster/request`, which never writes to the Vuex `cluster` store.
+ * Loading pods into the store from here (as the old background cleanup job did with a cluster-wide
+ * findAll) corrupts other pages: a Deployment detail page then shows every pod in the store.
  */
 
-import { POD, NAMESPACE } from '@shell/config/types';
-import { NODE_SHELL_CONFIG, type ShellPodOptions, type NodeShellPod } from '../types/node-shell';
+import { NODE_SHELL_CONFIG as CFG } from '../types/node-shell';
+import { log } from './log';
 
-/**
- * Generate unique pod name with UUID suffix (Lens-compatible)
- */
-export function generatePodName(): string {
-  const uuid = crypto.randomUUID();
-  return `${NODE_SHELL_CONFIG.POD_PREFIX}${uuid}`;
+type RootDispatch = (action: string, payload?: any) => Promise<any>;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function statusOf(err: any): number | undefined {
+  return err?._status || err?.status || err?.response?.status;
+}
+
+function messageOf(err: any): string {
+  return err?.message || err?.data?.message || err?._statusText || String(err);
+}
+
+function podsUrl(clusterId: string, name?: string): string {
+  const base = `/k8s/clusters/${ clusterId }/v1/pods/${ CFG.NAMESPACE }`;
+
+  return name ? `${ base }/${ name }` : base;
+}
+
+async function ensureNamespace(dispatch: RootDispatch, clusterId: string): Promise<void> {
+  try {
+    await dispatch('cluster/request', { url: `/k8s/clusters/${ clusterId }/v1/namespaces/${ CFG.NAMESPACE }` });
+  } catch (err) {
+    // 403: the user may create shell pods without being allowed to read the namespace object.
+    // Carry on; creating the pod will fail with a clear error if the namespace really is missing.
+    if (statusOf(err) === 403) {
+      return;
+    }
+    if (statusOf(err) !== 404) {
+      throw err;
+    }
+
+    await dispatch('cluster/request', {
+      url:    `/k8s/clusters/${ clusterId }/v1/namespaces`,
+      method: 'POST',
+      data:   {
+        apiVersion: 'v1',
+        kind:       'Namespace',
+        metadata:   { name: CFG.NAMESPACE, labels: { 'app.kubernetes.io/managed-by': CFG.LABELS.MANAGED_BY } }
+      }
+    });
+  }
 }
 
 /**
- * Build pod manifest for node shell (Lens-equivalent)
- * 
- * Key differences from standard pod:
- * - Privileged container with nsenter
- * - hostPID, hostIPC, hostNetwork enabled
- * - system-node-critical priority
- * - tolerates all taints
- * - scheduled directly to target node
+ * Delete shell pods that have finished or outlived MAX_AGE_MS.
+ *
+ * Runs only when someone opens a shell, scoped to one namespace and one label.
+ * Failures are ignored: a leftover pod is harmless (activeDeadlineSeconds stops it anyway).
  */
-export function buildShellPodManifest(options: ShellPodOptions): any {
-  const { nodeName, namespace = NODE_SHELL_CONFIG.NAMESPACE, podName = generatePodName() } = options;
-  
-  const now = new Date().toISOString();
-  const expiresAt = new Date(Date.now() + NODE_SHELL_CONFIG.SHELL_TIMEOUT).toISOString();
+async function cleanupStaleShellPods(dispatch: RootDispatch, clusterId: string): Promise<void> {
+  try {
+    const res = await dispatch('cluster/request', { url: `${ podsUrl(clusterId) }?labelSelector=app%3D${ CFG.LABELS.APP }` });
+    const now = Date.now();
+    const stale = (res?.data || []).filter((pod: any) => {
+      // Re-check the label: never delete anything that is not a shell pod, even if the selector was ignored
+      if (pod.metadata?.labels?.app !== CFG.LABELS.APP) {
+        return false;
+      }
+      const phase = pod.status?.phase;
+      const createdAt = pod.metadata?.annotations?.[CFG.ANNOTATIONS.CREATED_AT] || pod.metadata?.creationTimestamp;
+      const age = createdAt ? now - new Date(createdAt).getTime() : 0;
+
+      return phase === 'Succeeded' || phase === 'Failed' || age > CFG.MAX_AGE_MS;
+    });
+
+    await Promise.allSettled(stale.map((pod: any) => dispatch('cluster/request', {
+      url:    podsUrl(clusterId, pod.metadata.name),
+      method: 'DELETE'
+    })));
+  } catch (err) {
+    log.warn('[NodeShell] Cleanup of old shell pods skipped:', messageOf(err));
+  }
+}
+
+function buildPodManifest(nodeName: string) {
+  const podName = `${ CFG.POD_PREFIX }${ Date.now().toString(36) }-${ Math.random().toString(36).substr(2, 6) }`;
 
   return {
     apiVersion: 'v1',
-    kind: 'Pod',
-    metadata: {
-      name: podName,
-      namespace,
-      labels: {
-        app: NODE_SHELL_CONFIG.LABELS.APP,
-        'app.kubernetes.io/managed-by': NODE_SHELL_CONFIG.LABELS.MANAGED_BY,
-        'node-shell/target-node': nodeName,
+    kind:       'Pod',
+    metadata:   {
+      name:      podName,
+      namespace: CFG.NAMESPACE,
+      labels:    {
+        app:                          CFG.LABELS.APP,
+        'app.kubernetes.io/managed-by': CFG.LABELS.MANAGED_BY,
       },
       annotations: {
-        [NODE_SHELL_CONFIG.ANNOTATIONS.NODE_NAME]: nodeName,
-        [NODE_SHELL_CONFIG.ANNOTATIONS.CREATED_AT]: now,
-        [NODE_SHELL_CONFIG.ANNOTATIONS.EXPIRES_AT]: expiresAt,
+        [CFG.ANNOTATIONS.NODE_NAME]:  nodeName,
+        [CFG.ANNOTATIONS.CREATED_AT]: new Date().toISOString(),
       }
     },
     spec: {
-      // Critical: Schedule directly to target node
-      nodeName,
-      
-      // Host access (required for nsenter)
-      hostNetwork: true,
-      hostPID: true,
-      hostIPC: true,
-      
-      // High priority to avoid eviction
-      priorityClassName: NODE_SHELL_CONFIG.PRIORITY_CLASS,
-      
-      // Don't restart on failure
-      restartPolicy: 'Never',
-      
-      // Tolerate all taints (schedule even on tainted nodes)
-      tolerations: [
-        {
-          operator: 'Exists'
-        }
-      ],
-      
-      // Immediate termination
+      nodeName, // Schedule directly to target node
+      hostPID:                       true,
+      hostIPC:                       true,
+      hostNetwork:                   true,
+      restartPolicy:                 'Never',
       terminationGracePeriodSeconds: 0,
-      
-      containers: [
-        {
-          name: 'shell',
-          image: NODE_SHELL_CONFIG.IMAGE,
-          imagePullPolicy: 'IfNotPresent',
-          
-          // nsenter command: enter node's namespaces
-          command: ['nsenter'],
-          args: [
-            '-t', '1',      // Target PID 1 (init process)
-            '-m',           // Mount namespace
-            '-u',           // UTS namespace (hostname)
-            '-i',           // IPC namespace
-            '-n',           // Network namespace
-            'sleep',        // Keep container alive
-            '14000'         // ~4 hours (safety buffer)
-          ],
-          
-          // Privileged mode (required for nsenter)
-          securityContext: {
-            privileged: true
-          },
-          
-          resources: {}  // No resource limits (best-effort)
-        }
-      ]
+      activeDeadlineSeconds:         CFG.ACTIVE_DEADLINE_SECONDS,
+      priorityClassName:             CFG.PRIORITY_CLASS,
+      tolerations:                   [{ operator: 'Exists' }],
+      containers:                    [{
+        name:            'shell',
+        image:           CFG.IMAGE,
+        command:         ['nsenter'],
+        args:            ['-t', '1', '-m', '-u', '-i', '-n', 'sleep', String(CFG.ACTIVE_DEADLINE_SECONDS)],
+        securityContext: { privileged: true },
+        resources:       {}
+      }]
     }
   };
 }
 
-/**
- * Check if namespace exists, create if not
- */
-export async function ensureNamespace(store: any, namespace: string = NODE_SHELL_CONFIG.NAMESPACE): Promise<boolean> {
-  try {
-    // Check if namespace exists
-    const existingNs = await store.dispatch('cluster/find', {
-      type: NAMESPACE,
-      id: namespace,
-      opt: { force: false }
-    }).catch(() => null);
-    
-    if (existingNs) {
-      return true;
+async function waitForRunning(dispatch: RootDispatch, clusterId: string, name: string): Promise<any> {
+  const deadline = Date.now() + CFG.WAIT_TIMEOUT_MS;
+  let interval = CFG.WAIT_INITIAL_INTERVAL_MS;
+
+  while (Date.now() < deadline) {
+    const pod = await dispatch('cluster/request', { url: podsUrl(clusterId, name) });
+    const phase = pod?.status?.phase;
+
+    if (phase === 'Running') {
+      return pod;
     }
-    
-    // Create namespace
-    const nsManifest = {
-      apiVersion: 'v1',
-      kind: 'Namespace',
-      metadata: {
-        name: namespace,
-        labels: {
-          'app.kubernetes.io/managed-by': NODE_SHELL_CONFIG.LABELS.MANAGED_BY,
-        }
-      }
-    };
-    
-    await store.dispatch('cluster/create', nsManifest);
-    
-    return true;
-  } catch (error) {
-    console.error('[NodeShell] Failed to ensure namespace:', error);
-    return false;
+
+    if (phase === 'Failed' || phase === 'Succeeded') {
+      throw new Error(`Shell pod stopped before it was ready (${ phase }): ${ pod?.status?.message || pod?.status?.reason || 'unknown reason' }`);
+    }
+
+    await sleep(interval);
+    interval = Math.min(Math.round(interval * 1.5), CFG.WAIT_MAX_INTERVAL_MS);
   }
+
+  throw new Error(`Timed out after ${ CFG.WAIT_TIMEOUT_MS / 1000 }s waiting for the shell pod to start`);
 }
 
 /**
- * Find existing active shell pod for a node
+ * Entry point used by the node table action and the node detail page.
+ *
+ * @param node Rancher node model (provides $dispatch / $rootGetters bound to the right store)
  */
-export async function findExistingShellPod(store: any, nodeName: string): Promise<any | null> {
+export async function openNodeShell(node: any): Promise<void> {
+  const dispatch: RootDispatch = (action, payload) => node.$dispatch(action, payload, { root: true });
+  const clusterId = node.$rootGetters['clusterId'];
+  const nodeName = node.metadata?.name;
+
   try {
-    const allPods = await store.dispatch('cluster/findAll', {
-      type: POD,
-      opt: { force: true }
+    dispatch('growl/info', {
+      title:   `Creating shell pod for ${ node.nameDisplay || nodeName }`,
+      message: 'Please wait...',
+      timeout: 3000
     });
-    
-    const existingPod = allPods.find((pod: any) => {
-      const targetNode = pod.metadata?.annotations?.[NODE_SHELL_CONFIG.ANNOTATIONS.NODE_NAME];
-      const isShellPod = pod.metadata?.labels?.app === NODE_SHELL_CONFIG.LABELS.APP;
-      const isRunning = ['Running', 'Pending'].includes(pod.status?.phase);
-      
-      return isShellPod && targetNode === nodeName && isRunning;
+
+    await ensureNamespace(dispatch, clusterId);
+    await cleanupStaleShellPods(dispatch, clusterId);
+
+    const manifest = buildPodManifest(nodeName);
+
+    await dispatch('cluster/request', {
+      url:    podsUrl(clusterId),
+      method: 'POST',
+      data:   manifest
     });
-    
-    return existingPod || null;
-  } catch (error) {
-    console.error('[NodeShell] Failed to find existing pod:', error);
-    return null;
-  }
-}
 
-/**
- * Create shell pod for node
- */
-export async function createShellPod(store: any, options: ShellPodOptions): Promise<any> {
-  const { nodeName, namespace = NODE_SHELL_CONFIG.NAMESPACE } = options;
-  
-  // Ensure namespace exists
-  const nsCreated = await ensureNamespace(store, namespace);
-  if (!nsCreated) {
-    throw new Error(`Failed to create or access namespace: ${namespace}`);
-  }
-  
-  // Check for existing pod
-  const existingPod = await findExistingShellPod(store, nodeName);
-  if (existingPod) {
-    console.log('[NodeShell] Reusing existing pod:', existingPod.metadata.name);
-    return existingPod;
-  }
-  
-  // Build and create new pod
-  const podManifest = buildShellPodManifest({ nodeName, namespace });
-  
-  try {
-    const createdPod = await store.dispatch('cluster/create', podManifest);
-    console.log('[NodeShell] Created pod:', createdPod.metadata.name);
-    return createdPod;
-  } catch (error: any) {
-    console.error('[NodeShell] Failed to create pod:', error);
-    throw new Error(`Failed to create shell pod: ${error.message || error}`);
-  }
-}
+    const running = await waitForRunning(dispatch, clusterId, manifest.metadata.name);
 
-/**
- * Wait for pod to be ready
- */
-export async function waitForPodReady(
-  store: any,
-  namespace: string,
-  podName: string,
-  timeout: number = NODE_SHELL_CONFIG.WAIT_TIMEOUT
-): Promise<boolean> {
-  const startTime = Date.now();
-  
-  while (Date.now() - startTime < timeout) {
-    try {
-      const pod = await store.dispatch('cluster/find', {
-        type: POD,
-        id: `${namespace}/${podName}`,
-        opt: { force: true }
-      });
-      
-      // Check if pod is ready
-      const phase = pod.status?.phase;
-      const conditions = pod.status?.conditions || [];
-      const readyCondition = conditions.find((c: any) => c.type === 'Ready');
-      
-      if (phase === 'Running' && readyCondition?.status === 'True') {
-        return true;
-      }
-      
-      // Check for failure states
-      if (phase === 'Failed' || phase === 'Unknown') {
-        throw new Error(`Pod entered ${phase} state`);
-      }
-      
-      // Wait before next check
-      await new Promise(resolve => setTimeout(resolve, NODE_SHELL_CONFIG.WAIT_INTERVAL));
-    } catch (error) {
-      console.error('[NodeShell] Error checking pod status:', error);
-      throw error;
-    }
-  }
-  
-  throw new Error('Timeout waiting for pod to be ready');
-}
+    // Classify into a Pod model WITHOUT adding it to the store, then reuse Rancher's own shell window
+    const pod = await dispatch('cluster/create', running);
 
-/**
- * Delete shell pod
- */
-export async function deleteShellPod(store: any, namespace: string, podName: string): Promise<void> {
-  try {
-    const pod = await store.dispatch('cluster/find', {
-      type: POD,
-      id: `${namespace}/${podName}`,
-      opt: { force: false }
-    }).catch(() => null);
-    
-    if (pod) {
-      await pod.remove();
-      console.log('[NodeShell] Deleted pod:', podName);
-    }
-  } catch (error) {
-    console.error('[NodeShell] Failed to delete pod:', error);
-    throw error;
-  }
-}
+    pod.openShell('shell');
+  } catch (err) {
+    const forbidden = statusOf(err) === 403;
 
-/**
- * Cleanup expired shell pods (background task)
- */
-export async function cleanupExpiredPods(store: any): Promise<number> {
-  try {
-    const allPods = await store.dispatch('cluster/findAll', {
-      type: POD,
-      opt: { force: true }
+    log.error('[NodeShell] Failed to open shell:', err);
+    dispatch('growl/error', {
+      title:   'Failed to open shell',
+      message: forbidden ? `You need a role that can create pods and exec into them in namespace ${ CFG.NAMESPACE }.` : messageOf(err),
+      timeout: 8000
     });
-    
-    const now = Date.now();
-    let cleaned = 0;
-    
-    for (const pod of allPods) {
-      const isShellPod = pod.metadata?.labels?.app === NODE_SHELL_CONFIG.LABELS.APP;
-      if (!isShellPod) continue;
-      
-      const expiresAtStr = pod.metadata?.annotations?.[NODE_SHELL_CONFIG.ANNOTATIONS.EXPIRES_AT];
-      if (!expiresAtStr) continue;
-      
-      const expiresAt = new Date(expiresAtStr).getTime();
-      if (now > expiresAt) {
-        await deleteShellPod(store, pod.metadata.namespace, pod.metadata.name);
-        cleaned++;
-      }
-    }
-    
-    if (cleaned > 0) {
-      console.log(`[NodeShell] Cleaned up ${cleaned} expired pods`);
-    }
-    
-    return cleaned;
-  } catch (error) {
-    console.error('[NodeShell] Cleanup failed:', error);
-    return 0;
   }
-}
-
-/**
- * Check if user has required permissions
- */
-export async function checkPermissions(store: any): Promise<{ canShell: boolean; missingPerms: string[] }> {
-  const missingPerms: string[] = [];
-  
-  // Check pod permissions
-  const canListPods = !!store.getters['cluster/schemaFor'](POD);
-  if (!canListPods) {
-    missingPerms.push('list pods');
-  }
-  
-  // Check namespace permissions
-  const canListNamespaces = !!store.getters['cluster/schemaFor'](NAMESPACE);
-  if (!canListNamespaces) {
-    missingPerms.push('list namespaces');
-  }
-  
-  // Note: We can't directly check create/delete/exec permissions without attempting
-  // Those will be validated when user actually tries to shell
-  
-  return {
-    canShell: missingPerms.length === 0,
-    missingPerms
-  };
 }

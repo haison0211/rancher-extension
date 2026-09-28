@@ -1,0 +1,42 @@
+name: Check Extension Bundle Size
+
+# Rancher downloads the extension entry chunk before it renders anything, on every page load (F5).
+# 6.2.1 shipped an 853 KB entry that blocked the UI for 2-39s; keep it small.
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_call:
+
+jobs:
+  bundle-size:
+    runs-on: ubuntu-latest
+    env:
+      PKG: rancher-node-filter
+      MAX_ENTRY_BYTES: 61440 # 60 KB
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: yarn
+
+      - run: yarn install --frozen-lockfile
+
+      - run: yarn build-pkg "$PKG"
+
+      - name: Entry chunk must stay under the budget
+        run: |
+          entry=$(ls dist-pkg/${PKG}-*/${PKG}-*.umd.min.js)
+          size=$(wc -c < "$entry")
+          echo "Entry chunk: $entry = $size bytes (budget $MAX_ENTRY_BYTES)"
+          ls -l dist-pkg/${PKG}-*/*.js
+          if [ "$size" -gt "$MAX_ENTRY_BYTES" ]; then
+            echo "::error::Entry chunk is $size bytes, budget is $MAX_ENTRY_BYTES. Something heavy is imported eagerly (e.g. a models/ override or a non-lazy @shell import in index.ts)."
+            exit 1
+          fi

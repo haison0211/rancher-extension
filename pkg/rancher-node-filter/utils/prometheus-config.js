@@ -5,6 +5,8 @@
  * Uses localStorage to persist user settings
  */
 
+import { log } from './log';
+
 const STORAGE_KEY = 'rancher-node-filter.prometheus-endpoint';
 const DEFAULT_ENDPOINT = 'ops/services/ops-prometheus-server:80';
 
@@ -17,7 +19,7 @@ export function getPrometheusEndpoint() {
     const stored = localStorage.getItem(STORAGE_KEY);
     return stored || DEFAULT_ENDPOINT;
   } catch (error) {
-    console.warn('[PrometheusConfig] Error reading from localStorage:', error);
+    log.warn('[PrometheusConfig] Error reading from localStorage:', error);
     return DEFAULT_ENDPOINT;
   }
 }
@@ -29,14 +31,14 @@ export function getPrometheusEndpoint() {
 export function setPrometheusEndpoint(endpoint) {
   try {
     if (!endpoint || typeof endpoint !== 'string') {
-      console.warn('[PrometheusConfig] Invalid endpoint:', endpoint);
+      log.warn('[PrometheusConfig] Invalid endpoint:', endpoint);
       return false;
     }
     
     localStorage.setItem(STORAGE_KEY, endpoint.trim());
     return true;
   } catch (error) {
-    console.error('[PrometheusConfig] Error saving to localStorage:', error);
+    log.error('[PrometheusConfig] Error saving to localStorage:', error);
     return false;
   }
 }
@@ -49,7 +51,7 @@ export function resetPrometheusEndpoint() {
     localStorage.removeItem(STORAGE_KEY);
     return true;
   } catch (error) {
-    console.error('[PrometheusConfig] Error removing from localStorage:', error);
+    log.error('[PrometheusConfig] Error removing from localStorage:', error);
     return false;
   }
 }
