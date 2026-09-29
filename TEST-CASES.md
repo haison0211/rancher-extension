@@ -1,6 +1,6 @@
-# rancher-node-filter 7.0.0: test case
+# rancher-node-filter 7.0.1: test case
 
-Chạy trên **cả hai** phiên bản Rancher 2.13.x (`<cluster-2.13>`) và 2.14.x (`<cluster-2.14>`). Với mỗi cụm, ghi lại trạng thái SQL cache (vai):
+Chạy trên các phiên bản Rancher 2.13.x (`<cluster-2.13>`), 2.14.x (`<cluster-2.14>`) và 2.15.x (`<cluster-2.15>`). Với mỗi cụm, ghi lại trạng thái SQL cache (vai):
 `kubectl get features.management.cattle.io ui-sql-cache -o jsonpath='{.status.default} {.spec.value}'`
 
 **Tài khoản test:** admin và một user có role project-scoped (`<project-role>`).
@@ -24,6 +24,7 @@ Cột Kết quả: `Pass` / `Fail` / `N/A`, kèm ghi chú.
 | A9 | Deployment / StatefulSet / DaemonSet / Job detail: gauge, tab Pods, Services, Ingresses | Giống baseline | |
 | A10 | Cordon / Drain / Edit / Delete node từ list, và menu ⋮ của từng dòng | Hoạt động như baseline | |
 | A11 | **Bản build release** (cách 2 / cài thật, không phải `yarn dev`): trang Nodes → một dòng → Show Configuration (drawer) → tab YAML | Hiển thị YAML bình thường. Edit YAML mở trang gốc của Rancher, diff hoạt động (kiểm tra phần đã cắt FileDiff) | |
+| A12 | Node detail: gauge Pods | 2.15+: `Running 12 of 110 Pods`; 2.13/2.14: `Used 12 of 110 Pods`, giống baseline | |
 
 ## B. CPU / RAM của pod (bug: 2 đơn vị, sort sai)
 
@@ -102,6 +103,8 @@ Cột Kết quả: `Pass` / `Fail` / `N/A`, kèm ghi chú.
 | G4 | Có shell pod cũ > 30 phút / Completed, rồi mở Shell mới | Các pod cũ bị xoá | |
 | G5 | User không có `<node-shell-role>` | Thông báo rõ cần role đó | |
 | G6 | Sau khi mở Shell, vào một Deployment | Số pod của Deployment đúng (Shell không nạp pod vào store) | |
+| G7 | Rancher 2.15+: Global Settings → Feature Flags, tắt `node-shell`, sau đó F5 trang Nodes và Node detail. Làm lại với `pod-shell` | Action Shell không còn trong menu dòng Node, nút Shell ở Node detail biến mất. Bật lại flag thì cả hai hiện lại | |
+| G8 | Rancher 2.13/2.14 (không có hai flag trên) | Shell hoạt động như G1 | |
 
 ## H. Regression: Deployment hiện pod lạ
 
@@ -117,7 +120,7 @@ Cột Kết quả: `Pass` / `Fail` / `N/A`, kèm ghi chú.
 
 | ID | Bước | Mong đợi | Kết quả |
 |---|---|---|---|
-| I1 | `ls -l dist-pkg/rancher-node-filter-7.0.0/*.umd.min.js` | Entry ≤ 60 KB (hiện ~7 KB). Tổng chunk trang Nodes khoảng 540 KB | |
+| I1 | `ls -l dist-pkg/rancher-node-filter-7.0.1/*.umd.min.js` | Entry ≤ 60 KB (hiện ~7 KB). Tổng chunk trang Nodes khoảng 540 KB | |
 | I2 | F5 trên trang Deployment. DevTools: thời gian từ `/v1/uiplugins` tới request `management.cattle.io.settings` tiếp theo | Nhỏ hơn rõ so với 6.2.1 (trước là 2–39s) | |
 | I3 | Tab chứa trang Pods chuyển sang ẩn 2 phút (chuyển tab khác) | Không có request `metrics.k8s.io` trong lúc ẩn; quay lại thì refresh ngay | |
 | I4 | Trang Pods với panel Top pods đang thu gọn | Request metrics chỉ theo namespace của các dòng đang hiển thị khi ≤5 namespace, hoặc đúng 1 request toàn cụm khi >5 namespace. Mỗi chu kỳ 30s không có request trùng | |
@@ -138,4 +141,5 @@ done | grep -E '^[0-9.]+ - - ' | awk -F'"' '{split($2,r," "); p=r[2]; sub(/\?.*/
 |---|---|---|---|
 | J1 | Chạy toàn bộ A–I trên Rancher 2.13.1 | Pass | |
 | J2 | Chạy toàn bộ A–I trên Rancher 2.14.3 | Pass | |
+| J2b | Chạy toàn bộ A–I trên Rancher 2.15.2 | Pass | |
 | J3 | Trước khi nâng Rancher: diff `shell/list/node.vue` và `shell/detail/node.vue` của phiên bản mới với bản copy trong plugin | Không có thay đổi gốc nào bị mất | |

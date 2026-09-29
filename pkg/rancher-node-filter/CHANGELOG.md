@@ -5,6 +5,18 @@ All notable changes to the Rancher Node & Pod Extension will be documented in th
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [7.0.1] - 2026-09-29
+
+Rancher 2.15 support (checked against 2.15.2; 2.13 / 2.14 behave as in 7.0.0).
+
+### Changed
+- **Shell** (node row action and Node detail button) is hidden when Rancher 2.15+ turns the `node-shell` or
+  `pod-shell` feature flag off. With `pod-shell` off the server refuses pod exec, which is what this shell
+  uses. Rancher's own "SSH Shell" still only works for nodes whose machine Rancher provisioned (node
+  drivers), so this Shell stays for EKS / imported nodes. Older Rancher has neither flag: no change there.
+- Node detail Pods gauge reads "Running" on Rancher 2.15+, like Rancher's own page there (2.15 added that
+  label). Older Rancher keeps "Used".
+
 ## [7.0.0] - 2026-09-27
 
 Performance rewrite. See `FEATURES.md` (features, refresh intervals, native display fixes) and

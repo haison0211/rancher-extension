@@ -2,7 +2,7 @@ import { importTypes } from '@rancher/auto-import';
 import {
   IPlugin, ActionLocation, PanelLocation, TableColumnLocation
 } from '@shell/core/types';
-import { isNodeReady } from './utils/node-state';
+import { canOpenNodeShell } from './utils/node-state';
 
 /**
  * Rancher Node & Pod Extension
@@ -81,7 +81,7 @@ export default function(plugin: IPlugin): void {
     label:    'Shell',
     icon:     'icon-terminal',
     multiple: false,
-    enabled:  isNodeReady,
+    enabled:  canOpenNodeShell,
     invoke:   (opts: any, resources: any[]) => {
       import(/* webpackChunkName: "node-shell" */ './utils/node-shell').then(({ openNodeShell }) => openNodeShell(resources[0]));
     },

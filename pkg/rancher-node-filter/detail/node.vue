@@ -1,10 +1,11 @@
 <script>
 /**
- * Node detail: verbatim copy of Rancher's shell/detail/node.vue (Rancher 2.13.1; 2.14.3 only drops one spacer) plus
+ * Node detail: verbatim copy of Rancher's shell/detail/node.vue (Rancher 2.13.1; 2.14.3 only drops one spacer,
+ * 2.15.2 only adds the "Running" label on the Pods gauge, reproduced below where Rancher has that string) plus
  * - Display fix on Rancher's CPU / RAM gauges (see FEATURES.md "Native display fixes"): live usage / allocatable
  *   from metrics.k8s.io, the same numbers as the node list and `kubectl top nodes`
  * - CPU / RAM columns in the Pods tab (metrics.k8s.io, sortable by the real numbers)
- * - Shell button
+ * - Shell button (hidden when Rancher 2.15+ turns node or pod shell off)
  * - Pods are dropped from the store when leaving the page (like Rancher's node list does), so they
  *   can never show up in another page's pod list (e.g. a Deployment)
  *
@@ -36,7 +37,7 @@ import {
 } from '../services/metrics-store';
 import { parseQuantity, toMillicores } from '../utils/quantity';
 import { defineSortKey, sortGenerationWith } from '../utils/sort-keys';
-import { isNodeReady } from '../utils/node-state';
+import { isNodeReady, isShellFeatureEnabled } from '../utils/node-state';
 import { isPodTerminated } from '../utils/pod-state';
 
 const NODE_METRICS_DETAIL_URL = '/api/v1/namespaces/cattle-monitoring-system/services/http:rancher-monitoring-grafana:80/proxy/d/rancher-node-detail-1/rancher-node-detail?orgId=1';
@@ -270,8 +271,19 @@ export default {
       return [...new Set((this.value.pods || []).map((pod) => pod.metadata?.namespace).filter(Boolean))].sort();
     },
 
+    shellFeatureEnabled() {
+      return isShellFeatureEnabled(this.$store.getters);
+    },
+
     canShell() {
       return isNodeReady(this.value);
+    },
+
+    /** Rancher 2.15+ labels the Pods gauge "Running"; older Rancher has no such string and keeps "Used" */
+    podsUsedLabel() {
+      const key = 'node.detail.glance.consumptionGauge.running';
+
+      return this.$store.getters['i18n/exists'](key) ? this.t(key) : null;
     },
   },
 
@@ -352,7 +364,10 @@ export default {
         :message="t('node.detail.glance.kubelet')"
       />
     </div>
-    <div class="node-filter-actions">
+    <div
+      v-if="shellFeatureEnabled"
+      class="node-filter-actions"
+    >
       <button
         class="btn btn-sm role-secondary"
         :disabled="!canShell"
@@ -411,7 +426,19 @@ export default {
         :resource-name="t('node.detail.glance.consumptionGauge.pods')"
         :capacity="value.podCapacity"
         :used="value.podConsumed"
-      />
+      >
+        <!-- The bundled gauge predates its `usedLabel` prop: same markup as its default title, other label -->
+        <template
+          v-if="podsUsedLabel"
+          #title="{ amountTemplateValues, formattedPercentage }"
+        >
+          <span>{{ podsUsedLabel }}</span>
+          <span class="numbers-stats">
+            {{ t('node.detail.glance.consumptionGauge.amount', amountTemplateValues) }}
+            <span class="percentage"><i>/&nbsp;</i>{{ formattedPercentage }}</span>
+          </span>
+        </template>
+      </ConsumptionGauge>
     </div>
     <div class="spacer" />
     <ResourceTabs
