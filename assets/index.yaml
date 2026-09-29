@@ -31,6 +31,27 @@ entries:
       catalog.cattle.io/ui-component: plugins
       catalog.cattle.io/ui-extensions-version: '>= 3.0.0 < 4.0.0'
     apiVersion: v2
+    appVersion: 7.0.1
+    created: "2026-09-29T06:24:33.636776168Z"
+    description: 'Comprehensive Node & Pod management: Label filtering, synchronized
+      metrics, Prometheus disk monitoring, Shell into Node, Pod CPU/RAM metrics, and
+      HTTP Proxy for endpoint testing'
+    digest: 1a0055c596a5c4e540a6e486a3eae0733a311035899cd559445c120518c924bc
+    name: rancher-node-filter
+    type: application
+    urls:
+    - assets/rancher-node-filter/rancher-node-filter-7.0.1.tgz
+    version: 7.0.1
+  - annotations:
+      catalog.cattle.io/certified: rancher
+      catalog.cattle.io/namespace: cattle-ui-plugin-system
+      catalog.cattle.io/os: linux
+      catalog.cattle.io/permits-os: linux, windows
+      catalog.cattle.io/rancher-version: '>= 2.8.0'
+      catalog.cattle.io/scope: management
+      catalog.cattle.io/ui-component: plugins
+      catalog.cattle.io/ui-extensions-version: '>= 3.0.0 < 4.0.0'
+    apiVersion: v2
     appVersion: 7.0.0
     created: "2026-09-28T02:50:56.09747413Z"
     description: 'Comprehensive Node & Pod management: Label filtering, synchronized
@@ -390,4 +411,4 @@ entries:
     urls:
     - assets/rancher-pod-metrics/rancher-pod-metrics-1.0.0.tgz
     version: 1.0.0
-generated: "2026-09-28T02:50:56.096916074Z"
+generated: "2026-09-29T06:24:33.635995543Z"
